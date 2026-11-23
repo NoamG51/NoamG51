@@ -14,6 +14,8 @@ Everything runs on the phone. No photos or video leave the device, and there's n
 
 **Ghost Pose:** instead of only telling you what to do, the app draws a dotted outline of the target pose or position on top of you. Joints that still need to move glow; once you match the outline it says "✓ Matched" and moves on. Outlines exist for: hand on hip, turning the body, bending the front knee, reframing (head cut off, too much sky, thirds), and selfie/group face position and size. Other tips (mostly lighting) show one line of text and a glowing spot.
 
+**Photo review:** after every photo (auto or manual), a review screen opens with the score, a one-line summary, the fixes for next time in order (numbered on the photo too), what's already working, light and tilt readings, and the change versus your last photo. Retake goes straight back to the camera.
+
 Tips are shown in order: framing, lighting, angle, pose, polish. A tip stays up for at least 2 seconds, shows "✓ Matched" when fixed, and can be skipped. Spoken tips use the phone's built-in voice.
 
 ## Put it on your phone (GitHub Pages, free)

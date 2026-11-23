@@ -259,7 +259,7 @@ function renderHud() {
 function updateAutoCapture(now) {
   const auto = S.auto;
   const blocking = S.active.some((r) => r.cat === "framing" || r.id === "eyes_closed");
-  const ready = auto && S.metrics.present && !blocking && (S.score ?? 0) >= 85 && now > S.cooldownUntil;
+  const ready = auto && $("viewer").hidden && S.metrics.present && !blocking && (S.score ?? 0) >= 85 && now > S.cooldownUntil;
   document.querySelector(".shutter-wrap").classList.toggle("ready", ready);
   if (!ready) { S.goodSince = 0; if (S.countdownAt) { S.countdownAt = 0; hideCountdown(); } return; }
   if (!S.goodSince) S.goodSince = now;
@@ -282,13 +282,49 @@ function capture() {
   c.width = video.videoWidth; c.height = video.videoHeight;
   c.getContext("2d").drawImage(video, 0, 0);
   const f = $("flash"); f.classList.remove("go"); void f.offsetWidth; f.classList.add("go");
-  const score = Math.round(S.score ?? 0);
+  const review = buildReview();
   c.toBlob((blob) => {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
-    S.photos.push({ blob, url, score, mode: S.mode, at: new Date() });
+    S.photos.push({ blob, url, score: review.score, mode: S.mode, at: new Date(), review });
     renderGalleryBtn();
+    openViewer(S.photos.length - 1);
   }, "image/jpeg", 0.92);
+}
+
+// Snapshot of the coaching at the moment the photo was taken.
+function buildReview() {
+  const m = S.metrics || { present: false, faces: [], light: {}, group: {} };
+  const score = Math.round(S.score ?? 0);
+  const clamp = (v) => Math.min(1, Math.max(0, v));
+  const fixes = S.active.slice(0, 5).map((r) => {
+    let t = null;
+    try { t = r.target ? r.target(m) : null; } catch {}
+    const ok = t && isFinite(t.x) && isFinite(t.y);
+    return { cat: r.cat, say: r.say, why: r.why, who: r.who[S.mode] || "", x: ok ? clamp(t.x) : null, y: ok ? clamp(t.y) : null };
+  });
+  const cats = new Set(S.active.map((r) => r.cat));
+  const working = [];
+  if (m.present && !cats.has("framing")) working.push(S.mode === "group" ? "Everyone fits in the frame" : "Well framed");
+  if (m.light && m.light.face != null && !cats.has("lighting")) working.push("Good light on the face");
+  if (!cats.has("angle") && (m.tilt || m.mainFace)) working.push("Flattering camera angle");
+  if (m.pose && !cats.has("pose") && S.mode !== "group") working.push("Relaxed, natural pose");
+  if (m.faces && m.faces.length && !m.anyBlink) working.push(m.faces.length > 1 ? "Everyone's eyes are open" : "Eyes open");
+
+  const pct = (v) => (v == null ? null : Math.round(v * 100));
+  const readouts = [];
+  if (m.light && m.light.face != null) readouts.push({ label: "Face brightness", value: pct(m.light.face) + "%", flag: m.light.face < 0.2 || m.light.face > 0.9 });
+  if (m.light && m.light.bg != null) readouts.push({ label: "Background", value: pct(m.light.bg) + "%", flag: cats.has("lighting") && S.active.some((r) => r.id === "backlit") });
+  if (m.light && m.light.side) readouts.push({ label: "Side shadow", value: pct(m.light.side) + "%", flag: m.light.side > 0.33 });
+  if (m.tilt) readouts.push({ label: "Tilt", value: Math.abs(m.tilt.roll).toFixed(1) + "°", flag: Math.abs(m.tilt.roll) > 4 });
+  if (S.mode !== "solo" && m.faces) readouts.push({ label: "Faces", value: String(m.faces.length), flag: false });
+
+  const summary = !m.present ? "No one was in the shot."
+    : score >= 85 ? "Great shot. Nothing major to fix."
+    : score >= 70 ? "Good shot. A small fix would make it better."
+    : score >= 50 ? "Okay shot. A few easy fixes below."
+    : "Needs work. Start with fix 1.";
+  return { score, fixes, working: working.slice(0, 4), readouts, summary };
 }
 
 function renderGalleryBtn() {
@@ -322,22 +358,85 @@ $("viewer-save").addEventListener("click", async () => {
   a.href = p.url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
 });
 
+const MODE_NAME = { solo: "Solo", selfie: "Selfie", group: "Group selfie" };
 function openViewer(i) {
   S.viewIdx = i;
-  const p = S.photos[i];
+  const p = S.photos[i], r = p.review;
   $("viewer-img").src = p.url;
-  $("viewer-meta").textContent = `Score ${p.score} · ${p.mode === "group" ? "Group" : p.mode === "selfie" ? "Selfie" : "Solo"} · ${i + 1} of ${S.photos.length}`;
+  $("viewer-meta").textContent = `Photo ${i + 1} of ${S.photos.length}`;
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  hideCountdown(); S.countdownAt = 0; S.goodSince = 0;
+
+  // Score + summary
+  $("review-score").textContent = String(r.score);
+  $("review-ring-fill").style.strokeDashoffset = String(207.35 * (1 - r.score / 100));
+  document.querySelector(".review-ring").classList.toggle("great", r.score >= 85);
+  $("review-kicker").textContent = MODE_NAME[p.mode];
+  $("review-summary").textContent = r.summary;
+  const prev = S.photos[i - 1], delta = $("review-delta");
+  if (prev) {
+    const d = r.score - prev.score;
+    delta.textContent = d === 0 ? "Same as last photo" : `${d > 0 ? "▲ +" : "▼ "}${d} vs last photo`;
+    delta.className = "review-delta " + (d > 0 ? "up" : d < 0 ? "down" : "");
+  } else { delta.textContent = ""; delta.className = "review-delta"; }
+
+  // Fixes, numbered on the photo too
+  const ol = $("review-fixes"); ol.innerHTML = "";
+  const markers = $("review-markers"); markers.innerHTML = "";
+  if (!r.fixes.length) {
+    const li = document.createElement("li"); li.className = "review-empty"; li.textContent = "Nothing to fix. Nice one.";
+    ol.appendChild(li);
+  }
+  const placed = [];
+  r.fixes.forEach((f, k) => {
+    const li = document.createElement("li");
+    li.innerHTML = '<span class="num"></span><div class="body"><span class="cat"></span><span class="say"></span><span class="why"></span></div>';
+    li.querySelector(".num").textContent = String(k + 1);
+    li.querySelector(".cat").textContent = CAT_LABEL[f.cat] + (f.who ? " · " + f.who : "");
+    li.querySelector(".say").textContent = f.say;
+    li.querySelector(".why").textContent = f.why;
+    ol.appendChild(li);
+    if (f.x != null) {
+      let x = f.x, y = f.y;
+      // Spread markers that point at the same spot.
+      while (placed.some((q) => Math.abs(q.x - x) < 0.06 && Math.abs(q.y - y) < 0.05)) x = x > 0.85 ? x - 0.08 : x + 0.08;
+      placed.push({ x, y });
+      const mk = document.createElement("span");
+      mk.className = "r-marker"; mk.textContent = String(k + 1);
+      mk.style.left = x * 100 + "%"; mk.style.top = y * 100 + "%";
+      markers.appendChild(mk);
+    }
+  });
+
+  // What's working
+  const ul = $("review-working"); ul.innerHTML = "";
+  r.working.forEach((t) => { const li = document.createElement("li"); li.textContent = t; ul.appendChild(li); });
+  $("review-working-block").hidden = !r.working.length;
+
+  // Readings
+  const chips = $("review-readouts"); chips.innerHTML = "";
+  r.readouts.forEach((c) => {
+    const s = document.createElement("span"); s.className = "chip" + (c.flag ? " flag" : "");
+    s.append(c.label + " "); const b = document.createElement("b"); b.textContent = c.value; s.appendChild(b);
+    chips.appendChild(s);
+  });
+  chips.parentElement.hidden = !r.readouts.length;
+
+  // Session strip
   const strip = $("viewer-strip"); strip.innerHTML = "";
   S.photos.forEach((ph, j) => {
     const b = document.createElement("button");
     b.type = "button"; b.style.backgroundImage = `url("${ph.url}")`;
     b.setAttribute("aria-label", `Photo ${j + 1}, score ${ph.score}`);
     if (j === i) b.setAttribute("aria-current", "true");
+    const sc = document.createElement("span"); sc.textContent = String(ph.score); b.appendChild(sc);
     b.addEventListener("click", () => openViewer(j));
     strip.appendChild(b);
   });
   $("viewer").hidden = false;
+  document.querySelector(".viewer-scroll").scrollTop = 0;
 }
+$("viewer-retake").addEventListener("click", closeViewer);
 function closeViewer() { $("viewer").hidden = true; }
 
 // ---------------- Speech (built into the phone, free) ----------------
@@ -345,7 +444,7 @@ function primeSpeech() {
   try { if (window.speechSynthesis) speechSynthesis.speak(new SpeechSynthesisUtterance("")); } catch {}
 }
 function speak(text, force) {
-  if (!S.voice || !window.speechSynthesis) return;
+  if (!S.voice || !window.speechSynthesis || !$("viewer").hidden) return;
   const now = performance.now();
   if (!force && (text === S.lastSpoken && now - S.lastSpeakAt < 8000)) return;
   if (!force && now - S.lastSpeakAt < 2500) return;

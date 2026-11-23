@@ -75,19 +75,55 @@
   </footer>
 </section>
 
-<!-- Photo viewer -->
+<!-- Photo review -->
 <section id="viewer" class="viewer" hidden>
   <div class="viewer-top">
-    <button type="button" id="viewer-close" class="text-btn">Close</button>
+    <button type="button" id="viewer-close" class="text-btn">← Camera</button>
     <span id="viewer-meta" class="viewer-meta"></span>
   </div>
-  <div class="viewer-img"><img id="viewer-img" alt="Captured photo"></div>
-  <div class="viewer-strip" id="viewer-strip"></div>
+  <div class="viewer-scroll">
+    <div class="review-photo">
+      <img id="viewer-img" alt="Your photo">
+      <div id="review-markers"></div>
+    </div>
+
+    <div class="review-head">
+      <div class="review-ring" aria-hidden="true">
+        <svg viewBox="0 0 76 76"><circle class="track" cx="38" cy="38" r="33"/><circle id="review-ring-fill" class="fill" cx="38" cy="38" r="33" stroke-dasharray="207.35" stroke-dashoffset="207.35"/></svg>
+        <b id="review-score">–</b>
+      </div>
+      <div class="review-title">
+        <span id="review-kicker" class="eyebrow"></span>
+        <h2 id="review-summary"></h2>
+        <span id="review-delta" class="review-delta"></span>
+      </div>
+    </div>
+
+    <div id="review-fixes-block" class="review-block">
+      <div class="review-label">Fix next time</div>
+      <ol id="review-fixes" class="review-fixes"></ol>
+    </div>
+    <div id="review-working-block" class="review-block">
+      <div class="review-label">Already working</div>
+      <ul id="review-working" class="review-working"></ul>
+    </div>
+    <div class="review-block">
+      <div class="review-label">Light and angle readings</div>
+      <div id="review-readouts" class="chips"></div>
+    </div>
+    <p class="fineprint">Want ideas that use the scene, like "lean on the fence"? Save this photo and upload it to Pose Coach in Claude.</p>
+
+    <div class="review-block">
+      <div class="review-label">This session</div>
+      <div class="viewer-strip" id="viewer-strip"></div>
+    </div>
+    <p class="fineprint">Photos stay on this page until you save them. They're gone if you close the page.</p>
+  </div>
   <div class="viewer-actions">
     <button type="button" id="viewer-delete" class="btn-ghost">Delete</button>
-    <button type="button" id="viewer-save" class="btn-primary">Save</button>
+    <button type="button" id="viewer-save" class="btn-ghost">Save</button>
+    <button type="button" id="viewer-retake" class="btn-primary">Retake</button>
   </div>
-  <p class="fineprint">Photos stay on this page until you save them. They're gone if you close the page.</p>
 </section>
 
 <script type="module" src="js/app.js"></script>
