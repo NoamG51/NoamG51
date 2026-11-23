@@ -1,13 +1,14 @@
 import { FilesetResolver, PoseLandmarker, FaceLandmarker } from "../vendor/mediapipe/vision_bundle.mjs";
 import { poseMetrics, faceMetrics, computeMetrics, LightMeter, TiltSensor } from "./analyze.js";
 import { RULES, CAT_LABEL, rank } from "./rules.js";
+import { SKELETON } from "./ghost.js";
 
 const $ = (id) => document.getElementById(id);
 const WASM = new URL("../vendor/mediapipe/wasm", import.meta.url).href;
 const POSE_MODEL = new URL("../models/pose_landmarker_lite.task", import.meta.url).href;
 const FACE_MODEL = new URL("../models/face_landmarker.task", import.meta.url).href;
 
-const SKELETON = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+const JOINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
 
 const S = {
   mode: "solo",
@@ -26,6 +27,7 @@ const S = {
   goodSince: 0, countdownAt: 0, cooldownUntil: 0,
   photos: [], viewIdx: 0,
   running: false,
+  auto: true,
 };
 
 // ---------------- Start ----------------
@@ -131,6 +133,10 @@ $("tip-skip").addEventListener("click", () => {
   updateTip(performance.now());
 });
 $("shutter").addEventListener("click", () => capture());
+$("auto-btn").addEventListener("click", () => {
+  S.auto = !S.auto;
+  $("auto-btn").setAttribute("aria-pressed", String(S.auto));
+});
 
 function resetCoaching() {
   S.ruleState.clear(); S.skipped.clear(); S.active = [];
@@ -166,7 +172,7 @@ function detect(video, now) {
   const pose = usesPose ? poseMetrics(S.poseRes && S.poseRes.landmarks && S.poseRes.landmarks[0], aspect) : null;
   let faces = faceMetrics(S.faceRes);
   if (S.mode !== "group" && faces.length > 1) faces = [faces.sort((a, b) => b.w - a.w)[0]];
-  S.metrics = computeMetrics({ mode: S.mode, pose, faces, meter: S.meter, tilt: S.tilt.read() });
+  S.metrics = computeMetrics({ mode: S.mode, pose, faces, meter: S.meter, tilt: S.tilt.read(), aspect });
   evaluate(now);
 }
 
@@ -224,38 +230,37 @@ function renderHud() {
   const score = Math.round(S.score ?? 0);
   if (now < S.niceUntil) {
     tip.className = "tip nice";
-    $("tip-who").textContent = "✓ Nice";
-    $("tip-cat").textContent = "";
-    $("tip-say").textContent = "That's fixed";
+    $("tip-eyebrow").textContent = "✓ Matched";
+    $("tip-say").textContent = "That's it";
     $("tip-why").textContent = "";
     $("tip-skip").hidden = true;
   } else if (S.tip) {
     tip.className = "tip";
-    $("tip-who").textContent = S.tip.who[S.mode] || "";
-    $("tip-cat").textContent = CAT_LABEL[S.tip.cat];
+    const who = S.tip.who[S.mode] || "";
+    const lead = S.tip.ghost ? (S.tip.cat === "pose" ? "Match the outline" : "Line up with the outline") : CAT_LABEL[S.tip.cat];
+    $("tip-eyebrow").textContent = who ? `${lead} · ${who}` : lead;
     $("tip-say").textContent = S.tip.say;
     $("tip-why").textContent = S.tip.why;
     $("tip-skip").hidden = false;
   } else {
-    tip.className = "tip good";
-    $("tip-who").textContent = "Looking good";
-    $("tip-cat").textContent = "";
-    $("tip-say").textContent = $("auto-cap").checked ? "Hold still…" : "Take the shot";
+    tip.className = "tip nice";
+    $("tip-eyebrow").textContent = "Looking good";
+    $("tip-say").textContent = S.auto ? "Hold still…" : "Take the shot";
     $("tip-why").textContent = S.skipped.size ? `${S.skipped.size} skipped tip${S.skipped.size > 1 ? "s" : ""} hidden` : "";
     $("tip-skip").hidden = true;
   }
-  const C = 125.66;
+  const C = 270.18;
   $("ring-fill").style.strokeDashoffset = String(C * (1 - score / 100));
-  $("ring-fill").style.stroke = score >= 85 ? "var(--ok)" : "var(--accent)";
-  $("score").textContent = String(score);
+  $("score").textContent = `${score}%`;
+  $("shutter").setAttribute("aria-label", `Take photo. Score ${score} percent`);
 }
 
 // ---------------- Auto-capture ----------------
 function updateAutoCapture(now) {
-  const auto = $("auto-cap").checked;
+  const auto = S.auto;
   const blocking = S.active.some((r) => r.cat === "framing" || r.id === "eyes_closed");
   const ready = auto && S.metrics.present && !blocking && (S.score ?? 0) >= 85 && now > S.cooldownUntil;
-  $("shutter").classList.toggle("armed", ready);
+  document.querySelector(".shutter-wrap").classList.toggle("ready", ready);
   if (!ready) { S.goodSince = 0; if (S.countdownAt) { S.countdownAt = 0; hideCountdown(); } return; }
   if (!S.goodSince) S.goodSince = now;
   if (!S.countdownAt && now - S.goodSince > 600) S.countdownAt = now;
@@ -388,23 +393,12 @@ function draw(now) {
   ctx.stroke();
 
   const m = S.metrics;
-  // Skeleton
-  if (m && m.pose) {
-    const lm = m.pose.lm;
-    ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
-    ctx.beginPath();
-    for (const [a, b] of SKELETON) {
-      if ((lm[a].visibility ?? 1) < 0.5 || (lm[b].visibility ?? 1) < 0.5) continue;
-      ctx.moveTo(...P(lm[a].x, lm[a].y)); ctx.lineTo(...P(lm[b].x, lm[b].y));
-    }
-    ctx.stroke();
-  }
-  // Face brackets (group and selfie)
+  // Face brackets (selfie and group), kept faint
   if (m && S.mode !== "solo") {
     for (const f of m.faces) {
       const [ax, ay] = P(f.box.x0, f.box.y0), [bx, by] = P(f.box.x1, f.box.y1);
       const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), y0 = ay, y1 = by, k = Math.min(16, (x1 - x0) / 4);
-      ctx.strokeStyle = f.blink > 0.55 ? "#f0a04b" : "rgba(255,255,255,0.75)"; ctx.lineWidth = 2.5;
+      ctx.strokeStyle = f.blink > 0.55 ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.45)"; ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(x0, y0 + k); ctx.lineTo(x0, y0); ctx.lineTo(x0 + k, y0);
       ctx.moveTo(x1 - k, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y0 + k);
@@ -413,17 +407,17 @@ function draw(now) {
       ctx.stroke();
     }
   }
-  // Target marker for the current tip
-  if (m && S.tip && S.tip.target) {
-    let t = null;
-    try { t = S.tip.target(m); } catch {}
-    if (t && isFinite(t.x) && isFinite(t.y)) {
-      const [x, y] = P(Math.min(1, Math.max(0, t.x)), Math.min(1, Math.max(0, t.y)));
-      const pulse = 1 + 0.15 * Math.sin(now / 180);
-      ctx.fillStyle = "rgba(240,160,75,0.25)";
-      ctx.beginPath(); ctx.arc(x, y, 26 * pulse, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#f0a04b";
-      ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
+  // Ghost outline for the current tip, or a soft target ring
+  if (m && S.tip && now >= S.niceUntil) {
+    let g = null, t = null;
+    try { g = S.tip.ghost ? S.tip.ghost(m) : null; } catch {}
+    if (g) drawGhost(g, P, m, now);
+    else {
+      try { t = S.tip.target ? S.tip.target(m) : null; } catch {}
+      if (t && isFinite(t.x) && isFinite(t.y)) {
+        const [x, y] = P(Math.min(1, Math.max(0, t.x)), Math.min(1, Math.max(0, t.y)));
+        drawPending(x, y, now);
+      }
     }
   }
   // Level indicator
@@ -441,6 +435,82 @@ function draw(now) {
   }
 }
 
+// A joint or spot that still has to move: glow + hollow ring.
+function drawPending(x, y, now) {
+  const pulse = 1 + 0.18 * Math.sin(now / 200);
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  ctx.beginPath(); ctx.arc(x, y, 19 * pulse, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+function drawDot(x, y, r) {
+  ctx.fillStyle = "#fff";
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawGhost(g, P, m, now) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.95)";
+  ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.setLineDash([2, 8]);
+  ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 4;
+
+  if (g.lm) {
+    const lm = g.lm, ok = (i) => (lm[i].visibility ?? 1) >= 0.5;
+    ctx.beginPath();
+    for (const [a, b] of SKELETON) {
+      if (!ok(a) || !ok(b)) continue;
+      ctx.moveTo(...P(lm[a].x, lm[a].y)); ctx.lineTo(...P(lm[b].x, lm[b].y));
+    }
+    ctx.stroke();
+    const [s1x, s1y] = P(lm[11].x, lm[11].y), [s2x, s2y] = P(lm[12].x, lm[12].y);
+    const headR = Math.max(14, Math.hypot(s1x - s2x, s1y - s2y) * 0.32);
+    const [hx, hy] = P(lm[0].x, lm[0].y - 0.01);
+    ctx.beginPath(); ctx.arc(hx, hy, headR, 0, Math.PI * 2); ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    const cur = m.pose && m.pose.lm;
+    const near = (i) => {
+      if (!cur) return false;
+      const [ax, ay] = P(cur[i].x, cur[i].y), [bx, by] = P(lm[i].x, lm[i].y);
+      return Math.hypot(ax - bx, ay - by) < 20;
+    };
+    for (const i of JOINTS) {
+      if (!ok(i)) continue;
+      const [x, y] = P(lm[i].x, lm[i].y);
+      if (g.focus.includes(i) && !near(i)) drawPending(x, y, now);
+      else drawDot(x, y, g.focus.includes(i) ? 5 : 3.5);
+    }
+    if (g.focus.includes(0)) {
+      if (near(0)) drawDot(hx, hy, 5); else drawPending(hx, hy, now);
+    }
+  }
+
+  if (g.faceBox) {
+    const b = g.faceBox;
+    const [ax, ay] = P(b.x0, b.y0), [bx, by] = P(b.x1, b.y1);
+    const x0 = Math.min(ax, bx), w = Math.abs(bx - ax), y0 = ay, h = by - ay;
+    ctx.beginPath();
+    ctx.ellipse(x0 + w / 2, y0 + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    const f = S.tip.id === "edge_face" ? m.group.edgeFace : m.mainFace;
+    const [cx, cy] = P((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2);
+    if (f) {
+      const [fx, fy] = P(f.cx, f.cy);
+      if (Math.hypot(fx - cx, fy - cy) < 20 && Math.abs(f.w - (b.x1 - b.x0)) < 0.04) drawDot(cx, cy, 5);
+      else drawPending(cx, cy, now);
+    }
+  }
+  ctx.restore();
+}
+
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && window.speechSynthesis) speechSynthesis.cancel();
 });
+
+// Test hook: open with ?debug to reach app state from the browser console.
+if (new URLSearchParams(location.search).has("debug")) window.__poseCoach = { S, draw, renderHud, computeMetrics, poseMetrics, RULES };

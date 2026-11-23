@@ -5,8 +5,11 @@
 //   w:     points taken off the score while the problem is showing
 //   who:   who has to act, per mode
 //   target(m): optional {x, y} to point at on screen
+//   ghost(m):  optional outline to match (see ghost.js)
 //
 // Thresholds are first guesses. Tune them after trying the app.
+
+import * as G from "./ghost.js";
 
 export const CAT_ORDER = ["framing", "lighting", "angle", "pose", "polish"];
 export const CAT_LABEL = { framing: "Framing", lighting: "Lighting", angle: "Angle", pose: "Pose", polish: "Polish" };
@@ -38,12 +41,14 @@ export const RULES = [
     id: "head_cut", modes: ["solo"], cat: "framing", pri: 10, w: 20, who: PHOTOGRAPHER,
     test: (m) => m.pose && m.pose.headTop < 0.02,
     target: (m) => ({ x: m.pose.nose.x, y: 0.04 }),
+    ghost: G.lowerHead,
     say: "Leave space above the head", why: "The top of the head is cut off. Tilt up a little or step back.",
   },
   {
     id: "edge_face", modes: ["selfie", "group"], cat: "framing", pri: 10, w: 20, who: SUBJECT,
     test: (m) => m.group.edge,
     target: (m) => ({ x: m.group.edgeFace.cx, y: m.group.edgeFace.cy }),
+    ghost: G.faceInward,
     say: "Move in from the edge", why: "Faces near the edge get cut off and stretched by the wide lens.",
   },
   {
@@ -62,6 +67,7 @@ export const RULES = [
     id: "too_much_sky", modes: ["solo"], cat: "framing", pri: 40, w: 6, who: PHOTOGRAPHER,
     test: (m) => m.pose && m.pose.fullBody && m.pose.headTop > 0.3,
     target: () => ({ x: 0.5, y: 0.12 }),
+    ghost: G.raiseBody,
     say: "Tilt down or step closer", why: "There's a lot of empty space above the head.",
   },
 
@@ -112,24 +118,28 @@ export const RULES = [
     id: "selfie_close", modes: ["selfie"], cat: "angle", pri: 10, w: 12, who: PHOTOGRAPHER,
     test: (m) => m.mainFace && m.mainFace.w > 0.55,
     target: headTarget,
+    ghost: G.faceSize,
     say: "Hold the phone at arm's length", why: "Too close with the front lens makes the nose look bigger.",
   },
   {
     id: "selfie_far", modes: ["selfie"], cat: "angle", pri: 20, w: 6, who: PHOTOGRAPHER,
     test: (m) => m.mainFace && m.mainFace.w < 0.18,
     target: headTarget,
+    ghost: G.faceSize,
     say: "Bring the phone a bit closer", why: "Your face is small in the frame.",
   },
   {
     id: "eyes_low", modes: ["selfie"], cat: "angle", pri: 30, w: 8, who: PHOTOGRAPHER,
     test: (m) => m.mainFace && m.mainFace.eyeY > 0.55,
     target: (m) => ({ x: m.mainFace.cx, y: 0.36 }),
+    ghost: G.faceToThird,
     say: "Raise the phone a little", why: "Your eyes should sit near the upper grid line.",
   },
   {
     id: "eyes_high", modes: ["selfie"], cat: "angle", pri: 30, w: 6, who: PHOTOGRAPHER,
     test: (m) => m.mainFace && m.mainFace.box.y0 < 0.03,
     target: (m) => ({ x: m.mainFace.cx, y: 0.05 }),
+    ghost: G.faceDown,
     say: "Lower the phone a little", why: "Leave a bit of space above your head.",
   },
   {
@@ -149,25 +159,29 @@ export const RULES = [
     id: "arms_straight", modes: ["solo"], cat: "pose", pri: 0, w: 10, who: SUBJECT,
     test: (m) => m.pose && m.pose.armsStraight,
     target: (m) => m.pose.hipMid || m.pose.shMid,
-    say: "Bend an arm, hand in a pocket", why: "Arms hanging straight down look stiff. Anything that bends should bend.",
+    ghost: G.bendArm,
+    say: "Bring your hand to your hip", why: "Arms hanging straight down look stiff. Anything that bends should bend.",
   },
   {
     id: "square_on", modes: ["solo"], cat: "pose", pri: 10, w: 8, who: SUBJECT,
     test: (m) => m.pose && m.pose.hipMid && m.pose.square,
     target: (m) => m.pose.shMid,
-    say: "Turn your body about 30°", why: "Facing the camera square-on looks flat. Keep your face toward the camera.",
+    ghost: G.turnBody,
+    say: "Turn your body a little", why: "About 30° away from the camera. Keep your face toward it.",
   },
   {
     id: "selfie_square", modes: ["selfie"], cat: "pose", pri: 10, w: 5, who: SUBJECT,
     test: (m) => m.pose && !m.pose.hipMid && m.pose.square,
     target: (m) => m.pose.shMid,
+    ghost: G.turnBody,
     say: "Angle your shoulders slightly", why: "A slight turn looks slimmer and more natural. Keep your face to the camera.",
   },
   {
     id: "locked_legs", modes: ["solo"], cat: "pose", pri: 20, w: 8, who: SUBJECT,
     test: (m) => m.pose && m.pose.lockedLegs,
     target: (m) => m.pose.hipMid,
-    say: "Weight on your back leg", why: "Bend the front knee a little. Locked, even legs look stiff.",
+    ghost: G.bendKnee,
+    say: "Bend your front knee", why: "Put your weight on your back leg. Locked, even legs look stiff.",
   },
 
   // ---------- Polish ----------
@@ -180,6 +194,7 @@ export const RULES = [
     id: "thirds", modes: ["solo"], cat: "polish", pri: 10, w: 4, who: PHOTOGRAPHER,
     test: (m) => m.pose && Math.abs(m.pose.cx - 0.5) < 0.07,
     target: (m) => ({ x: m.pose.cx < 0.5 ? 1 / 3 : 2 / 3, y: 0.5 }),
+    ghost: G.toThirds,
     say: "Line up with a side grid line", why: "Slightly off-center usually looks more natural than dead center.",
   },
 ];

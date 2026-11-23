@@ -134,7 +134,7 @@ const grow = (b, k) => {
   return { x0: cx - hw, x1: cx + hw, y0: cy - hh, y1: cy + hh };
 };
 
-export function computeMetrics({ mode, pose, faces, meter, tilt }) {
+export function computeMetrics({ mode, pose, faces, meter, tilt, aspect = 1 }) {
   const sorted = faces.slice().sort((a, b) => b.w - a.w);
   const mainFace = sorted[0] || null;
   const subjectBox = mainFace ? mainFace.box : pose ? pose.headBox : null;
@@ -176,7 +176,7 @@ export function computeMetrics({ mode, pose, faces, meter, tilt }) {
   }
 
   const anyBlink = faces.some((f) => f.blink > 0.55);
-  return { mode, pose, faces, mainFace, light, group, tilt, anyBlink, present: !!(pose || faces.length) };
+  return { mode, aspect, pose, faces, mainFace, light, group, tilt, anyBlink, present: !!(pose || faces.length) };
 }
 
 // Phone tilt from the motion sensor. iOS reports gravity with the opposite
