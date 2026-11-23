@@ -29,6 +29,7 @@
       <legend>What are you shooting?</legend>
       <label><input type="radio" name="start-mode" value="solo" checked><span><b>Solo</b><small>Someone else holds the phone</small></span></label>
       <label><input type="radio" name="start-mode" value="selfie"><span><b>Selfie</b><small>Just you, front camera</small></span></label>
+      <label><input type="radio" name="start-mode" value="couple"><span><b>Couple</b><small>The two of you, someone else holds the phone</small></span></label>
       <label><input type="radio" name="start-mode" value="group"><span><b>Group selfie</b><small>2 or more, front camera</small></span></label>
     </fieldset>
 
@@ -62,10 +63,12 @@
       <div class="seg" role="group" aria-label="Shot type">
         <button type="button" data-mode="solo">Solo</button>
         <button type="button" data-mode="selfie">Selfie</button>
+        <button type="button" data-mode="couple">Couple</button>
         <button type="button" data-mode="group">Group</button>
       </div>
-      <div class="tool-btns">
-        <button type="button" id="poses-btn" class="chip-btn" aria-haspopup="dialog">Poses</button>
+      <button type="button" id="poses-btn" class="chip-btn poses-btn" aria-haspopup="dialog">Poses</button>
+    </div>
+    <div class="side-tools">
         <button type="button" id="auto-btn" class="chip-btn" aria-pressed="true" aria-label="Auto-capture">Auto</button>
         <button type="button" id="voice-btn" class="round" aria-pressed="false" aria-label="Spoken tips">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path class="wave" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>
@@ -73,7 +76,6 @@
         <button type="button" id="flip-btn" class="round" aria-label="Switch camera">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2"/></svg>
         </button>
-      </div>
     </div>
   </header>
 
@@ -89,9 +91,9 @@
       <span id="sheet-title" class="sheet-title">Pick a pose</span>
       <button type="button" id="sheet-close" class="chip-btn">Close</button>
     </div>
-    <p class="sheet-sub">Pick one and its outline appears on you. Or let the coach suggest the pose closest to how you're standing.</p>
+    <p class="sheet-sub" id="sheet-sub">Pick a pose and a ghost outline appears in the frame. Step into it, then match the pose.</p>
     <button type="button" id="pose-auto" class="pose-auto">Let the coach pick</button>
-    <div id="pose-grid" class="pose-grid"></div>
+    <div id="pose-grid" class="pose-sections"></div>
   </div>
 
   <footer class="controls">

@@ -90,6 +90,36 @@ export const POSES = [
     spec: { turn: 0.9, L: { arm: [14, -28], leg: [16, -3], thighLen: 0.35, shinLen: 0.8 }, R: { arm: [14, -28], leg: [14, 4], thighLen: 0.35, shinLen: 1.05 } } },
   { id: "sit_edge", name: "Sit on a ledge", how: "Sit on the edge, legs loose, hands resting beside you on the ledge.", modes: ["solo"], prop: "ledge",
     spec: { turn: 0.9, L: { arm: [24, 4], leg: [12, -4], thighLen: 0.35 }, R: { arm: [24, 4], leg: [10, 6], thighLen: 0.35 } } },
+
+  // ---- Couples (two people; A on the left, B on the right) ----
+  { id: "c_side_hug", name: "Side by side, arms around each other", how: "Stand close, inside arms around each other's waist, outside hands relaxed. Lean your heads in a little.", modes: ["couple"], prop: null,
+    people: [
+      { at: [-0.5, 0], spec: { turn: 0.8, head: 0.05, L: { arm: [34, 68], foreLen: 0.95 }, R: { arm: [8, 4] } } },
+      { at: [0.5, 0.06], scale: 0.93, spec: { turn: 0.8, head: -0.06, R: { arm: [34, 68], foreLen: 0.95 }, L: { arm: [8, 4] } } } ] },
+  { id: "c_back_hug", name: "Hug from behind", how: "One stands behind and wraps their arms around the other's waist. Rest your chin near their shoulder.", modes: ["couple"], prop: null,
+    people: [
+      { at: [-0.18, -0.12], spec: { turn: 0.85, head: 0.12, L: { arm: [6, -62] }, R: { arm: [6, -62] } } },
+      { at: [0.12, 0.05], scale: 0.93, spec: { turn: 0.85, head: -0.04, L: { arm: [10, -40] }, R: { arm: [10, -40] } } } ] },
+  { id: "c_walk", name: "Walk hand in hand", how: "Hold hands and walk slowly toward the camera, chatting. Burst mode catches the best step.", modes: ["couple"], prop: null,
+    people: [
+      { at: [-0.6, 0], spec: { turn: 0.9, L: { arm: [28, 12] }, R: { arm: [-12, -8], leg: [10, -4] }, } },
+      { at: [0.6, 0.05], scale: 0.93, spec: { turn: 0.9, R: { arm: [28, 12] }, L: { arm: [-12, -8], leg: [-8, 14], shinLen: 0.85 } } } ] },
+  { id: "c_forehead", name: "Forehead to forehead", how: "Face each other, hands on each other's waist, and gently touch foreheads. Eyes closed or smiling.", modes: ["couple"], prop: null,
+    people: [
+      { at: [-0.48, 0], spec: { turn: 0.3, lean: 9, head: 0.16, L: { arm: [40, 50] }, R: { arm: [6, 4] } } },
+      { at: [0.48, 0.05], scale: 0.93, spec: { turn: 0.3, lean: -9, head: -0.16, R: { arm: [40, 50] }, L: { arm: [6, 4] } } } ] },
+  { id: "c_head_shoulder", name: "Head on the shoulder", how: "Stand side by side; one rests their head on the other's shoulder, who puts an arm around them.", modes: ["couple"], prop: null,
+    people: [
+      { at: [-0.32, 0], spec: { turn: 0.85, L: { arm: [62, 100], upperLen: 0.62, foreLen: 0.38 }, R: { arm: [8, 4] } } },
+      { at: [0.32, 0.12], scale: 0.9, spec: { turn: 0.85, lean: -6, head: -0.16, R: { arm: [10, -30] }, L: { arm: [8, 4] } } } ] },
+  { id: "c_back_to_back", name: "Back to back", how: "Stand back to back, arms crossed, and look at the camera with a grin.", modes: ["couple"], prop: null,
+    people: [
+      { at: [-0.24, 0], spec: { turn: 0.35, head: -0.06, L: { arm: [14, -90], foreLen: 0.4 }, R: { arm: [14, 90], foreLen: 0.4 } } },
+      { at: [0.24, 0.04], scale: 0.93, spec: { turn: 0.35, head: 0.06, L: { arm: [14, 90], foreLen: 0.4 }, R: { arm: [14, -90], foreLen: 0.4 } } } ] },
+  { id: "c_hold_hands", name: "Face each other, holding hands", how: "Stand an arm's length apart, hold both hands and smile at each other, not the camera.", modes: ["couple"], prop: null,
+    people: [
+      { at: [-0.62, 0], spec: { turn: 0.35, L: { arm: [32, 42] }, R: { arm: [-32, -42] } } },
+      { at: [0.62, 0.05], scale: 0.93, spec: { turn: 0.35, R: { arm: [32, 42] }, L: { arm: [-32, -42] } } } ] },
 ];
 
 // Standing stiffly: arms hanging, square to the camera. Never suggested; used so
@@ -103,24 +133,52 @@ export async function loadExtraPoses() {
     const r = await fetch(new URL("../data/poses.json", import.meta.url));
     if (!r.ok) return;
     const list = await r.json();
-    extra = (Array.isArray(list) ? list : []).filter((p) => p && p.id && p.kp);
+    extra = (Array.isArray(list) ? list : []).filter((p) => p && p.id && (p.kp || p.people));
   } catch {}
 }
 
-// Every pose as { ...meta, kp } with kp[joint] = {x, y} in torso units.
-export function allPoses() {
-  return [
-    ...POSES.map((p) => ({ ...p, kp: buildPose(p.spec) })),
-    ...extra.map((p) => ({ modes: ["solo"], prop: null, ...p, kp: Object.fromEntries(Object.entries(p.kp).map(([k, v]) => [Number(k), v])) })),
-  ];
+const numKeys = (kp) => Object.fromEntries(Object.entries(kp).map(([k, v]) => [Number(k), v]));
+
+// Build all people of a pose in one shared frame: origin = average of their
+// hip centres, 1 unit = their average torso length (same as normalizeGroup).
+function buildPeople(p) {
+  if (p.spec) return [buildPose(p.spec)];
+  if (p.kp) return [numKeys(p.kp)];
+  if (p.people && p.people[0] && p.people[0].spec) {
+    const raw = p.people.map((q) => {
+      const kp = buildPose(q.spec), sc = q.scale ?? 1, [ax, ay] = q.at || [0, 0];
+      const out = {};
+      for (const [j, v] of Object.entries(kp)) out[j] = { x: ax + v.x * sc, y: ay + v.y * sc };
+      return { kp: out, at: [ax, ay], sc };
+    });
+    const cx = raw.reduce((s, r) => s + r.at[0], 0) / raw.length, cy = raw.reduce((s, r) => s + r.at[1], 0) / raw.length;
+    const ms = raw.reduce((s, r) => s + r.sc, 0) / raw.length;
+    return raw.map((r) => {
+      const out = {};
+      for (const [j, v] of Object.entries(r.kp)) out[j] = { x: (v.x - cx) / ms, y: (v.y - cy) / ms };
+      return out;
+    });
+  }
+  return (p.people || []).map(numKeys);
 }
 
-// ---- Normalizing a detected pose ----
+// Every pose as { ...meta, people: [kp, ...], kp (first person) }.
+let cache = null, cacheN = -1;
+export function allPoses() {
+  if (cache && cacheN === extra.length) return cache;
+  cache = [...POSES, ...extra.map((p) => ({ modes: p.people ? ["couple"] : ["solo"], prop: null, ...p }))].map((p) => {
+    const people = buildPeople(p);
+    return { ...p, people, kp: people[0] };
+  });
+  cacheN = extra.length;
+  return cache;
+}
+
+// ---- Normalizing detected people ----
 const vis = (p) => p && (p.visibility ?? 1) >= 0.5;
 
-// Turn MediaPipe landmarks (normalized image coords) into torso units.
-// Returns { kp, anchor, scale, upperOnly } or null.
-export function normalize(lm, aspect) {
+// One person → anchor (hip centre), torso length, upperOnly. In aspect-corrected units.
+function personFrame(lm, aspect) {
   if (!lm || !vis(lm[11]) || !vis(lm[12])) return null;
   const X = (p) => p.x * aspect, Y = (p) => p.y;
   const sh = { x: (X(lm[11]) + X(lm[12])) / 2, y: (Y(lm[11]) + Y(lm[12])) / 2 };
@@ -130,19 +188,36 @@ export function normalize(lm, aspect) {
     anchor = { x: (X(lm[23]) + X(lm[24])) / 2, y: (Y(lm[23]) + Y(lm[24])) / 2 };
     scale = Math.hypot(sh.x - anchor.x, sh.y - anchor.y);
   } else {
-    // Upper body only: estimate torso length from nose-to-shoulders (≈ 0.5 torso).
-    const d = Math.hypot(X(lm[0]) - sh.x, Y(lm[0]) - sh.y);
+    const d = Math.hypot(X(lm[0]) - sh.x, Y(lm[0]) - sh.y); // nose to shoulders ≈ 0.5 torso
     scale = d / LEN.neck;
     anchor = { x: sh.x, y: sh.y + scale };
   }
-  if (!(scale > 0.01)) return null;
-  const kp = {};
-  for (const j of JOINTS) {
-    if (!vis(lm[j])) continue;
-    kp[j] = { x: (X(lm[j]) - anchor.x) / scale, y: (Y(lm[j]) - anchor.y) / scale };
-  }
-  return { kp, anchor, scale, upperOnly: !hipsOk };
+  return scale > 0.01 ? { anchor, scale, upperOnly: !hipsOk } : null;
 }
+
+function toUnits(lm, aspect, anchor, scale) {
+  const kp = {};
+  for (const j of JOINTS) if (vis(lm[j])) kp[j] = { x: (lm[j].x * aspect - anchor.x) / scale, y: (lm[j].y - anchor.y) / scale };
+  return kp;
+}
+
+// Several people → shared frame. People are sorted left to right.
+export function normalizeGroup(lms, aspect) {
+  const list = lms.map((lm) => ({ lm, f: personFrame(lm, aspect) })).filter((q) => q.f).sort((a, b) => a.f.anchor.x - b.f.anchor.x);
+  if (!list.length) return null;
+  const anchor = { x: list.reduce((s, q) => s + q.f.anchor.x, 0) / list.length, y: list.reduce((s, q) => s + q.f.anchor.y, 0) / list.length };
+  const scale = list.reduce((s, q) => s + q.f.scale, 0) / list.length;
+  return {
+    anchor, scale, upperOnly: list.some((q) => q.f.upperOnly),
+    lms: list.map((q) => q.lm),
+    people: list.map((q) => toUnits(q.lm, aspect, anchor, scale)),
+    own: list.map((q) => toUnits(q.lm, aspect, q.f.anchor, q.f.scale)), // each person in their own frame
+  };
+}
+export const normalize = (lm, aspect) => {
+  const g = normalizeGroup([lm], aspect);
+  return g && { kp: g.people[0], anchor: g.anchor, scale: g.scale, upperOnly: g.upperOnly };
+};
 
 // Average distance between two skeletons over the joints both have.
 export function poseDistance(a, b, joints) {
@@ -153,6 +228,14 @@ export function poseDistance(a, b, joints) {
   }
   return n >= 4 ? s / n : Infinity;
 }
+const groupDistance = (A, B, joints) => A.reduce((s, kp, i) => s + poseDistance(kp, B[i], joints), 0) / A.length;
+
+// Largest single-joint error: one arm in the wrong place shouldn't count as a match.
+function maxJointError(A, B, joints) {
+  let mx = 0;
+  A.forEach((kp, i) => { for (const j of joints) if (kp[j] && B[i][j]) mx = Math.max(mx, Math.hypot(kp[j].x - B[i][j].x, kp[j].y - B[i][j].y)); });
+  return mx;
+}
 
 // Mirror a skeleton left-right (so "hand on LEFT hip" also matches the right).
 export function mirror(kp) {
@@ -161,11 +244,12 @@ export function mirror(kp) {
   for (const [j, p] of Object.entries(kp)) out[swap[j]] = { x: -p.x, y: p.y };
   return out;
 }
+const mirrorGroup = (people) => people.map(mirror).reverse();
 
-// Best library match for the person right now.
-// Returns { pose, kp (possibly mirrored), dist, matched } or null.
-export function suggest(lm, aspect, mode, { exclude = [], prop = undefined, only = null } = {}) {
-  const n = normalize(lm, aspect);
+// Best library match for the people in view, placed on them.
+// Returns { pose, people (target kps, maybe mirrored), dist, norm, matched } or null.
+export function suggest(lms, aspect, mode, { exclude = [], prop = undefined, only = null } = {}) {
+  const n = normalizeGroup(lms, aspect);
   if (!n) return null;
   const joints = n.upperOnly ? UPPER : JOINTS;
   let best = null;
@@ -175,31 +259,77 @@ export function suggest(lm, aspect, mode, { exclude = [], prop = undefined, only
       if (!pose.modes.includes(mode) || exclude.includes(pose.id)) continue;
       if (prop !== undefined && pose.prop !== prop) continue;
     }
-    for (const kp of [pose.kp, mirror(pose.kp)]) {
-      const d = poseDistance(n.kp, kp, joints);
-      if (!best || d < best.dist) best = { pose, kp, dist: d };
+    if (pose.people.length !== n.people.length) continue;
+    for (const people of [pose.people, mirrorGroup(pose.people)]) {
+      const d = groupDistance(n.people, people, joints);
+      if (!best || d < best.dist) best = { pose, people, dist: d };
     }
   }
   if (!best) return null;
-  const dNeutral = poseDistance(n.kp, NEUTRAL, joints);
-  return { ...best, norm: n, matched: best.dist < 0.16 && best.dist < dNeutral * 0.6 };
+  return { ...best, norm: n, matched: isMatch(best.dist, n, best.people, joints) };
 }
 
-// Library pose → landmark-style array placed on the person, for drawing.
-export function placeOnPerson(kp, norm, aspect) {
-  const out = [];
-  for (let i = 0; i < 33; i++) out.push({ x: 0, y: 0, visibility: 0 });
-  for (const [j, p] of Object.entries(kp)) {
-    out[j] = { x: (norm.anchor.x + p.x * norm.scale) / aspect, y: norm.anchor.y + p.y * norm.scale, visibility: 1 };
-  }
-  return out;
+// A pose counts as matched when it's close on average, no joint is far off,
+// and (for one person) it's clearly not just standing stiffly.
+function isMatch(dist, n, target, joints) {
+  if (maxJointError(n.people, target, joints) > 0.38) return false;
+  if (n.people.length === 1) return dist < 0.16 && dist < poseDistance(n.own[0], NEUTRAL, joints) * 0.6;
+  return dist < 0.18;
 }
+
+// Target kps → landmark-style arrays (normalized image coords) for drawing.
+export function placePeople(people, anchor, scale, aspect) {
+  return people.map((kp) => {
+    const out = [];
+    for (let i = 0; i < 33; i++) out.push({ x: 0, y: 0, visibility: 0 });
+    for (const [j, p] of Object.entries(kp)) out[j] = { x: (anchor.x + p.x * scale) / aspect, y: anchor.y + p.y * scale, visibility: 1 };
+    return out;
+  });
+}
+export const placeOnPerson = (kp, norm, aspect) => placePeople([kp], norm.anchor, norm.scale, aspect)[0];
 
 // Which joints are furthest from the target (to highlight).
-export function worstJoints(norm, kp, k = 2) {
+export function worstJoints(cur, kp, k = 2) {
   return Object.keys(kp).map(Number)
-    .filter((j) => norm.kp[j])
-    .map((j) => [j, Math.hypot(norm.kp[j].x - kp[j].x, norm.kp[j].y - kp[j].y)])
+    .filter((j) => cur[j])
+    .map((j) => [j, Math.hypot(cur[j].x - kp[j].x, cur[j].y - kp[j].y)])
     .filter(([, d]) => d > 0.18)
     .sort((a, b) => b[1] - a[1]).slice(0, k).map(([j]) => j);
+}
+
+// ---- "Ghost in the frame": where a picked pose should sit before anyone is in it ----
+// Returns { anchor, scale } in aspect-corrected units: the outline fills ~60% of
+// the frame height, centred, in the upper part of the frame.
+export function framePlacement(pose, aspect) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const kp of pose.people) for (const [j, p] of Object.entries(kp)) {
+    const top = Number(j) === 0 ? p.y - 0.35 : p.y;
+    minX = Math.min(minX, p.x - 0.15); maxX = Math.max(maxX, p.x + 0.15);
+    minY = Math.min(minY, top); maxY = Math.max(maxY, p.y);
+  }
+  const H = 0.6, TOP = 0.12; // leaves room for the checklist at the bottom of the screen
+  let scale = H / (maxY - minY);
+  if ((maxX - minX) * scale > 0.9 * aspect) scale = (0.9 * aspect) / (maxX - minX);
+  const anchor = { x: 0.5 * aspect - ((minX + maxX) / 2) * scale, y: TOP + (H - (maxY - minY) * scale) / 2 - minY * scale };
+  return { anchor, scale };
+}
+
+// How well the people in view fill a frame-placed outline.
+// phase: "enter" | "closer" | "back" | "shift" | "pose" | "matched"
+export function fitToFrame(lms, aspect, pose, place) {
+  const n = normalizeGroup(lms, aspect);
+  const need = pose.people.length;
+  if (!n || n.people.length < need) return { phase: "enter", people: pose.people };
+  if (n.people.length > need) { n.people = n.people.slice(0, need); n.lms = n.lms.slice(0, need); n.own = n.own.slice(0, need); }
+  const ratio = n.scale / place.scale;
+  const off = { x: (n.anchor.x - place.anchor.x) / place.scale, y: (n.anchor.y - place.anchor.y) / place.scale };
+  const joints = n.upperOnly ? UPPER : JOINTS;
+  let people = pose.people, dist = groupDistance(n.people, people, joints);
+  const m = mirrorGroup(pose.people), dm = groupDistance(n.people, m, joints);
+  if (dm < dist) { people = m; dist = dm; }
+  const base = { norm: n, people, dist, ratio, off };
+  if (ratio < 0.8) return { ...base, phase: "closer" };
+  if (ratio > 1.25) return { ...base, phase: "back" };
+  if (Math.hypot(off.x, off.y) > 0.5) return { ...base, phase: "shift" };
+  return { ...base, phase: isMatch(dist, n, people, joints) ? "matched" : "pose" };
 }

@@ -6,7 +6,7 @@ const TITLES = ["Newbie", "Snapper", "Framer", "Pose Pro", "Light Chaser", "Cove
 
 export const FIX_XP = { framing: 10, lighting: 15, angle: 10, pose: 20, polish: 5 };
 export const FIX_CHEER = { framing: "Framed!", lighting: "Light nailed!", angle: "Great angle!", pose: "Pose matched!", polish: "Looking sharp!" };
-export const QUEST_NAME = { solo: "The Natural", selfie: "Best Angle", group: "Squad Goals" };
+export const QUEST_NAME = { solo: "The Natural", selfie: "Best Angle", couple: "Power Couple", group: "Squad Goals" };
 
 function load() {
   try {

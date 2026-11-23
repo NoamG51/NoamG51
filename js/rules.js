@@ -14,9 +14,9 @@ import * as G from "./ghost.js";
 export const CAT_ORDER = ["framing", "lighting", "angle", "pose", "polish"];
 export const CAT_LABEL = { framing: "Framing", lighting: "Lighting", angle: "Angle", pose: "Pose", polish: "Polish" };
 
-const ALL = ["solo", "selfie", "group"];
-const PHOTOGRAPHER = { solo: "Photographer", selfie: "You", group: "Phone holder" };
-const SUBJECT = { solo: "Subject", selfie: "You", group: "Everyone" };
+const ALL = ["solo", "selfie", "couple", "group"];
+const PHOTOGRAPHER = { solo: "Photographer", selfie: "You", couple: "Photographer", group: "Phone holder" };
+const SUBJECT = { solo: "Subject", selfie: "You", couple: "Both of you", group: "Everyone" };
 
 const headTarget = (m) => (m.mainFace ? { x: m.mainFace.cx, y: m.mainFace.cy } : m.pose ? { x: m.pose.nose.x, y: m.pose.nose.y } : null);
 
@@ -26,6 +26,11 @@ export const RULES = [
     id: "no_person", modes: ["solo"], cat: "framing", pri: 0, w: 60, who: PHOTOGRAPHER,
     test: (m) => !m.present,
     say: "Get the person in the frame", why: "I can't see anyone yet. Show at least head and shoulders.",
+  },
+  {
+    id: "couple_two", modes: ["couple"], cat: "framing", pri: 0, w: 60, who: PHOTOGRAPHER,
+    test: (m) => (m.people || []).length < 2,
+    say: "Get both of you in the frame", why: "I can see fewer than two people.",
   },
   {
     id: "no_face", modes: ["selfie", "group"], cat: "framing", pri: 0, w: 60, who: PHOTOGRAPHER,
@@ -38,7 +43,7 @@ export const RULES = [
     say: "Level the phone", why: "Turn the phone until the line in the middle sits on the marks.",
   },
   {
-    id: "head_cut", modes: ["solo"], cat: "framing", pri: 10, w: 20, who: PHOTOGRAPHER,
+    id: "head_cut", modes: ["solo", "couple"], cat: "framing", pri: 10, w: 20, who: PHOTOGRAPHER,
     test: (m) => m.pose && m.pose.headTop < 0.02,
     target: (m) => ({ x: m.pose.nose.x, y: 0.04 }),
     ghost: G.lowerHead,
@@ -52,7 +57,7 @@ export const RULES = [
     say: "Move in from the edge", why: "Faces near the edge get cut off and stretched by the wide lens.",
   },
   {
-    id: "knee_crop", modes: ["solo"], cat: "framing", pri: 20, w: 12, who: PHOTOGRAPHER,
+    id: "knee_crop", modes: ["solo", "couple"], cat: "framing", pri: 20, w: 12, who: PHOTOGRAPHER,
     test: (m) => m.pose && (m.pose.kneeCut || m.pose.ankleCut),
     target: () => ({ x: 0.5, y: 0.95 }),
     say: "Don't crop at the knees or feet", why: "Cutting at a joint looks like a mistake. Show the whole feet, or crop mid-thigh.",
@@ -64,7 +69,7 @@ export const RULES = [
     say: "Squeeze in, close the gap", why: "There's empty space between people. Get shoulder to shoulder.",
   },
   {
-    id: "too_much_sky", modes: ["solo"], cat: "framing", pri: 40, w: 6, who: PHOTOGRAPHER,
+    id: "too_much_sky", modes: ["solo", "couple"], cat: "framing", pri: 40, w: 6, who: PHOTOGRAPHER,
     test: (m) => m.pose && m.pose.fullBody && m.pose.headTop > 0.3,
     target: () => ({ x: 0.5, y: 0.12 }),
     ghost: G.raiseBody,
@@ -105,7 +110,7 @@ export const RULES = [
 
   // ---------- Angle ----------
   {
-    id: "solo_high_angle", modes: ["solo"], cat: "angle", pri: 0, w: 12, who: PHOTOGRAPHER,
+    id: "solo_high_angle", modes: ["solo", "couple"], cat: "angle", pri: 0, w: 12, who: PHOTOGRAPHER,
     test: (m) => m.tilt && m.pose && m.pose.fullBody && m.tilt.pitch > 10,
     say: "Lower the phone to waist height", why: "Pointing down from chest height makes legs look shorter. Hold it lower and tilt slightly up.",
   },
@@ -182,6 +187,12 @@ export const RULES = [
     target: (m) => m.pose.hipMid,
     ghost: G.bendKnee,
     say: "Bend your front knee", why: "Put your weight on your back leg. Locked, even legs look stiff.",
+  },
+
+  {
+    id: "couple_pose", modes: ["couple"], cat: "pose", pri: 0, w: 12, who: SUBJECT,
+    test: (m) => (m.people || []).length >= 2 && !m.poseMatched && !m.pinned,
+    say: "Try a couple pose", why: "Pick one from Poses, or follow the outline.",
   },
 
   // ---------- Polish ----------

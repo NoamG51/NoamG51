@@ -89,7 +89,8 @@ h1 { font-family: var(--display); font-weight: 400; margin: 0; font-size: clamp(
 .seg { display: inline-flex; background: var(--card); border-radius: 999px; padding: 3px; gap: 2px; box-shadow: 0 3px 0 var(--card-edge); }
 .seg button { border: 0; background: transparent; padding: 6px 10px; border-radius: 999px; font-weight: 600; font-size: .8rem; color: var(--fg); min-height: 34px; }
 .seg button[aria-pressed="true"] { background: var(--mint); color: var(--ink); }
-.tool-btns { display: flex; gap: 5px; align-items: center; }
+.side-tools { position: absolute; right: max(12px, env(safe-area-inset-right)); top: calc(160px + env(safe-area-inset-top)); display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.poses-btn { background: var(--pink); color: var(--ink); padding: 6px 14px; }
 .chip-btn { border: 0; border-radius: 999px; padding: 6px 9px; min-height: 36px; font-size: .78rem; font-weight: 700; background: var(--card); color: var(--muted); box-shadow: 0 3px 0 var(--card-edge); }
 .chip-btn[aria-pressed="true"] { background: var(--mint); color: var(--ink); }
 .round { width: 36px; height: 36px; flex: none; border-radius: 50%; border: 0; background: var(--card); display: grid; place-items: center; padding: 0; box-shadow: 0 3px 0 var(--card-edge); }
@@ -165,6 +166,8 @@ h1 { font-family: var(--display); font-weight: 400; margin: 0; font-size: clamp(
 .sheet-sub { margin: 0; color: var(--muted); font-size: .88rem; }
 .pose-auto { border: 2px dashed var(--muted); background: transparent; border-radius: 14px; padding: 12px; font-weight: 700; color: var(--fg); }
 .pose-auto[aria-pressed="true"] { border-style: solid; border-color: var(--mint); color: var(--mint); }
+.pose-sections { display: flex; flex-direction: column; gap: 12px; }
+.sheet-section { margin: 4px 0 0; font-family: var(--display); font-size: 1.05rem; font-weight: 400; }
 .pose-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pose-card { display: flex; flex-direction: column; gap: 3px; align-items: stretch; text-align: left; background: #1a1040; border: 2px solid transparent; border-radius: 14px; padding: 6px; }
 .pose-card[aria-pressed="true"] { border-color: var(--pink); }

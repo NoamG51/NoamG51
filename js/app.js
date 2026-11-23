@@ -3,7 +3,7 @@ import { poseMetrics, faceMetrics, computeMetrics, LightMeter, TiltSensor } from
 import { RULES, CAT_LABEL, rank } from "./rules.js";
 import { SKELETON } from "./ghost.js";
 import { Quest, FIX_XP, FIX_CHEER, QUEST_NAME } from "./quest.js";
-import { suggest, placeOnPerson, worstJoints, allPoses, loadExtraPoses } from "./poses.js";
+import { suggest, placePeople, worstJoints, allPoses, loadExtraPoses, framePlacement, fitToFrame } from "./poses.js";
 import { crowdScore, preloadCrowdScore } from "./aesthetic.js";
 
 const $ = (id) => document.getElementById(id);
@@ -34,8 +34,10 @@ const S = {
   quest: new Quest(),
   questItems: new Map(), // rule id -> { rule, done, doneAt, xp }
   sugg: null, suggAt: 0, pinned: null, pinRule: null, matchedPoses: new Set(), matchRun: 0,
+  fit: null, place: null, sheetSeen: new Set(),
 };
-const GATE = new Set(["no_person", "no_face"]); // must clear first; not part of the checklist
+const GATE = new Set(["no_person", "no_face", "couple_two"]);
+const BACK_CAMERA = new Set(["solo", "couple"]); // must clear first; not part of the checklist
 
 // ---------------- Start ----------------
 $("start-btn").addEventListener("click", start);
@@ -44,8 +46,8 @@ async function start() {
   const btn = $("start-btn"), status = $("start-status");
   btn.disabled = true; status.className = "status";
   S.mode = document.querySelector('input[name="start-mode"]:checked').value;
-  S.facing = S.mode === "solo" ? "environment" : "user";
-  S.voice = S.mode === "solo";
+  S.facing = BACK_CAMERA.has(S.mode) ? "environment" : "user";
+  S.voice = BACK_CAMERA.has(S.mode);
   primeSpeech();
   S.tilt.start(); // asks for motion permission on iPhone; fine if refused
 
@@ -55,6 +57,7 @@ async function start() {
     status.textContent = "Loading the coach (about 25 MB the first time)…";
     await loadModels();
     await loadExtraPoses();
+    setPoseCount();
   } catch (e) {
     console.error(e);
     btn.disabled = false;
@@ -75,6 +78,7 @@ async function start() {
   resizeOverlay();
   S.running = true;
   setTimeout(() => preloadCrowdScore().catch(() => {}), 2500);
+  maybeOpenPoseSheet();
   requestAnimationFrame(loop);
 }
 
@@ -121,11 +125,14 @@ document.querySelectorAll(".seg button").forEach((b) =>
     S.matchedPoses.clear();
     setModeUI();
     renderPlayer();
-    const want = S.mode === "solo" ? "environment" : "user";
+    setPoseCount();
+    maybeOpenPoseSheet();
+    const want = BACK_CAMERA.has(S.mode) ? "environment" : "user";
     if (want !== S.facing) { S.facing = want; await openCamera().catch(console.error); }
   }),
 );
 function setModeUI() {
+  $("poses-btn").hidden = S.mode === "group";
   document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === S.mode)));
 }
 $("flip-btn").addEventListener("click", async () => {
@@ -184,11 +191,19 @@ function detect(video, now) {
   if (now - S.lastLight > 250) { S.meter.update(video); S.lastLight = now; }
 
   const aspect = video.videoWidth / video.videoHeight;
-  const pose = usesPose ? poseMetrics(S.poseRes && S.poseRes.landmarks && S.poseRes.landmarks[0], aspect) : null;
+  const seen = (p) => p && (p.visibility ?? 1) > 0.5;
+  const people = (usesPose && S.poseRes && S.poseRes.landmarks ? S.poseRes.landmarks : []).filter((lm) => seen(lm[11]) && seen(lm[12]));
+  const width = (lm) => Math.abs(lm[11].x - lm[12].x) + Math.abs(lm[11].y - lm[0].y);
+  const main = people.slice().sort((a, b) => width(b) - width(a))[0];
+  const pose = usesPose ? poseMetrics(main, aspect) : null;
   let faces = faceMetrics(S.faceRes);
-  if (S.mode !== "group" && faces.length > 1) faces = [faces.sort((a, b) => b.w - a.w)[0]];
+  const keep = S.mode === "couple" ? 2 : 1;
+  if (S.mode !== "group" && faces.length > keep) faces = faces.sort((a, b) => b.w - a.w).slice(0, keep);
   S.metrics = computeMetrics({ mode: S.mode, pose, faces, meter: S.meter, tilt: S.tilt.read(), aspect });
+  S.metrics.people = people;
   updateSuggestion(now, aspect);
+  S.metrics.poseMatched = !!(S.sugg && S.sugg.matched) || !!(S.fit && S.fit.phase === "matched");
+  S.metrics.pinned = !!S.pinned;
   evaluate(now);
 }
 
@@ -196,8 +211,10 @@ function detect(video, now) {
 function evaluate(now) {
   const m = S.metrics;
   const active = [];
+  const frameGhostOn = S.pinned && S.mode !== "selfie";
   for (const r of S.pinRule ? [S.pinRule, ...RULES] : RULES) {
     if (!r.modes.includes(S.mode)) continue;
+    if (frameGhostOn && GATE.has(r.id)) continue; // the outline itself says where to stand
     let fail = false;
     try { fail = !!r.test(m); } catch { fail = false; }
     const st = S.ruleState.get(r.id) || { fail: 0, pass: 0, on: false };
@@ -281,9 +298,11 @@ function renderQuest() {
   const rows = [];
   if (gate) rows.push({ kind: "hint", text: gate.id === "no_face" ? "Get your face in the frame to start the quest" : "Get someone in the frame to start the quest" });
   else {
-    done.slice(-1).forEach((q) => rows.push({ kind: "done", text: q.rule.say, pts: `+${q.xp}` }));
-    if (now) rows.push({ kind: "now", text: tipSay(now.rule), why: tipWhy(now.rule), pts: `+${FIX_XP[now.rule.cat] || 5}` });
-    open.filter((q) => q !== now).slice(0, now ? 1 : 2).forEach((q) => rows.push({ kind: "open", text: tipSay(q.rule), pts: `+${FIX_XP[q.rule.cat] || 5}` }));
+    const placingNow = S.tip && S.tip.pinned && S.fit && ["enter", "closer", "back", "shift"].includes(S.fit.phase);
+    if (!placingNow) done.slice(-1).forEach((q) => rows.push({ kind: "done", text: q.rule.say, pts: `+${q.xp}` }));
+    const placing = now && now.rule.pinned && S.fit && ["enter", "closer", "back", "shift"].includes(S.fit.phase);
+    if (now) rows.push({ kind: "now", text: tipSay(now.rule), why: placing ? "" : tipWhy(now.rule), pts: `+${FIX_XP[now.rule.cat] || 5}` });
+    open.filter((q) => q !== now).slice(0, placing ? 0 : now ? 1 : 2).forEach((q) => rows.push({ kind: "open", text: tipSay(q.rule), pts: `+${FIX_XP[q.rule.cat] || 5}` }));
     if (!open.length) rows.push({ kind: "clear", text: S.auto ? "All clear! Hold still…" : "All clear! Take the shot" });
   }
   const count = gate ? "" : `${done.length} / ${items.length}`;
@@ -349,7 +368,7 @@ function nextToast() {
 // ---------------- Auto-capture ----------------
 function updateAutoCapture(now) {
   const auto = S.auto;
-  const blocking = S.active.some((r) => r.cat === "framing" || r.id === "eyes_closed");
+  const blocking = S.active.some((r) => r.cat === "framing" || r.id === "eyes_closed" || r.pinned);
   const ready = auto && $("viewer").hidden && S.metrics.present && !blocking && (S.score ?? 0) >= 85 && now > S.cooldownUntil;
   $("shutter").classList.toggle("ready", ready);
   if (!ready) { S.goodSince = 0; if (S.countdownAt) { S.countdownAt = 0; hideCountdown(); } return; }
@@ -406,7 +425,9 @@ function buildReview() {
   if (m.present && !cats.has("framing")) working.push(S.mode === "group" ? "Everyone fits in the frame" : "Well framed");
   if (m.light && m.light.face != null && !cats.has("lighting")) working.push("Good light on the face");
   if (!cats.has("angle") && (m.tilt || m.mainFace)) working.push("Flattering camera angle");
-  if (S.sugg && S.sugg.matched) working.unshift(`Pose: ${S.sugg.pose.name}`);
+  const pinnedPose = S.pinned && allPoses().find((p) => p.id === S.pinned);
+  if (S.fit && S.fit.phase === "matched" && pinnedPose) working.unshift(`Pose: ${pinnedPose.name}`);
+  else if (S.sugg && S.sugg.matched) working.unshift(`Pose: ${S.sugg.pose.name}`);
   else if (m.pose && !cats.has("pose") && S.mode !== "group") working.push("Relaxed, natural pose");
   if (m.faces && m.faces.length && !m.anyBlink) working.push(m.faces.length > 1 ? "Everyone's eyes are open" : "Eyes open");
 
@@ -457,7 +478,7 @@ $("viewer-save").addEventListener("click", async () => {
   a.href = p.url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
 });
 
-const MODE_NAME = { solo: "Solo", selfie: "Selfie", group: "Group selfie" };
+const MODE_NAME = { solo: "Solo", selfie: "Selfie", couple: "Couple", group: "Group selfie" };
 function openViewer(i) {
   S.viewIdx = i;
   const p = S.photos[i], r = p.review;
@@ -607,10 +628,21 @@ function draw(now) {
       ctx.stroke();
     }
   }
+  // Picked pose: the ghost stays in the frame, even before anyone is in view.
+  let pinG = null;
+  if (S.pinned && S.mode !== "selfie" && S.mode !== "group") { try { pinG = frameGhost(); } catch {} }
+  if (pinG) drawGhost(pinG, P, m, now, S.tip && S.tip.pinned ? 1 : 0.55);
+
   // Ghost outline for the current tip, or a soft target ring
-  if (m && S.tip && now >= S.niceUntil) {
+  if (m && S.tip && now >= S.niceUntil && !(S.tip.pinned && pinG)) {
     let g = null, t = null;
-    try { g = S.sugg && (S.tip.pinned || usesSuggestion(S.tip)) ? suggestionGhost() : S.tip.ghost ? S.tip.ghost(m) : null; } catch {}
+    try {
+      if (S.sugg && (S.tip.pinned || usesSuggestion(S.tip))) g = suggestionGhost();
+      else if (S.tip.ghost) {
+        g = S.tip.ghost(m);
+        if (g && g.lm) g = { people: [{ lm: g.lm, focus: g.focus, cur: m.pose && m.pose.lm }] };
+      }
+    } catch {}
     if (g) drawGhost(g, P, m, now);
     else {
       try { t = S.tip.target ? S.tip.target(m) : null; } catch {}
@@ -695,19 +727,37 @@ function drawLevel(tilt, W, r, now) {
 }
 
 // ---------------- Pose library ----------------
+function setPoseCount() {
+  try { S.pose && S.pose.setOptions({ numPoses: S.mode === "couple" ? 2 : 1 }); } catch {}
+}
+const poseById = (id) => allPoses().find((p) => p.id === id);
+
 function updateSuggestion(now, aspect) {
-  const lm = S.metrics.pose && S.metrics.pose.lm;
-  if (!lm || S.mode === "group") { S.sugg = null; S.matchRun = 0; return; }
+  const people = S.metrics.people || [];
+  S.fit = null;
+  if (S.mode === "group") { S.sugg = null; S.matchRun = 0; return; }
+
+  // A picked pose (not selfie): a fixed ghost in the frame to step into.
+  const pinned = S.pinned && poseById(S.pinned);
+  if (pinned && S.mode !== "selfie") {
+    S.sugg = null;
+    S.place = framePlacement(pinned, aspect);
+    S.fit = fitToFrame(people, aspect, pinned, S.place);
+    return;
+  }
+
+  const lms = S.mode === "couple" ? people : S.metrics.pose ? [S.metrics.pose.lm] : [];
+  if (!lms.length) { S.sugg = null; S.matchRun = 0; return; }
   let s = null;
-  if (S.pinned) s = suggest(lm, aspect, S.mode, { only: S.pinned });
+  if (pinned) s = suggest(lms, aspect, S.mode, { only: S.pinned });
   else {
     // Keep the same suggestion for a few seconds so it doesn't flicker.
-    if (S.sugg && now - S.suggAt < 4000) s = suggest(lm, aspect, S.mode, { only: S.sugg.pose.id });
-    if (!s) { s = suggest(lm, aspect, S.mode, { prop: null }); S.suggAt = now; }
+    if (S.sugg && now - S.suggAt < 4000) s = suggest(lms, aspect, S.mode, { only: S.sugg.pose.id });
+    if (!s) { s = suggest(lms, aspect, S.mode, { prop: null }); S.suggAt = now; }
   }
   S.sugg = s;
   S.matchRun = s && s.matched ? S.matchRun + 1 : 0;
-  if (s && S.matchRun === 4 && !S.matchedPoses.has(s.pose.id)) {
+  if (!S.pinned && s && S.matchRun === 4 && !S.matchedPoses.has(s.pose.id)) {
     S.matchedPoses.add(s.pose.id);
     const lv = S.quest.addXP(20);
     toast(`+20 XP · ${s.pose.name}!`);
@@ -716,65 +766,117 @@ function updateSuggestion(now, aspect) {
   }
 }
 
+const currentAspect = () => (S.metrics && S.metrics.aspect) || ($("video").videoWidth / $("video").videoHeight) || 1;
+
+// Outline placed on the people in view (auto suggestion, selfie pick).
 function suggestionGhost() {
-  const s = S.sugg;
-  return { lm: placeOnPerson(s.kp, s.norm, S.metrics.aspect), focus: worstJoints(s.norm, s.kp, 2) };
+  const s = S.sugg, a = currentAspect();
+  const placed = placePeople(s.people, s.norm.anchor, s.norm.scale, a);
+  return { people: placed.map((lm, i) => ({ lm, focus: worstJoints(s.norm.people[i], s.people[i], 2), cur: s.norm.lms[i] })) };
 }
 
-// Pose tips name the suggested library pose.
-// Only the top pose tip names the suggested pose; the others keep their own wording.
+// Outline fixed in the frame (picked pose): visible before anyone steps in.
+function frameGhost() {
+  const pose = S.pinned && poseById(S.pinned);
+  if (!pose || !S.place) return null;
+  const a = currentAspect(), f = S.fit;
+  const targets = f && f.people ? f.people : pose.people;
+  const placed = placePeople(targets, S.place.anchor, S.place.scale, a);
+  const posing = f && (f.phase === "pose" || f.phase === "matched");
+  const g = { people: placed.map((lm, i) => ({ lm, focus: posing ? worstJoints(f.norm.people[i], targets[i], 2) : [], cur: posing ? f.norm.lms[i] : null })) };
+  if (f && f.norm && f.phase === "shift") g.arrow = { from: { x: f.norm.anchor.x / a, y: f.norm.anchor.y }, to: { x: S.place.anchor.x / a, y: S.place.anchor.y } };
+  return g;
+}
+
+// Tip text. A picked pose talks you through stepping in, sizing, then posing.
 const topPoseRule = () => S.active.find((r) => r.cat === "pose" && !r.pinned);
 const usesSuggestion = (rule) => !!S.sugg && !S.pinned && !rule.pinned && rule === topPoseRule();
-function tipSay(rule) { return usesSuggestion(rule) ? `Try: ${S.sugg.pose.name}` : rule.say; }
-function tipWhy(rule) { return usesSuggestion(rule) ? S.sugg.pose.how : rule.why; }
+function pinText(rule) {
+  const pose = rule.pose, two = pose.people.length > 1;
+  if (S.mode === "selfie") return [rule.say, rule.why];
+  const f = S.fit;
+  switch (f ? f.phase : "enter") {
+    case "enter": return [two ? "Both of you, step into the outline" : "Step into the outline", "Stand where the dotted outline is. Photographer: hold the phone so the outline fits the scene."];
+    case "closer": return ["Photographer: step closer", "They should fill the outline. Walk in until they're the same size."];
+    case "back": return ["Photographer: step back", "They should fit inside the outline. Back up until they're the same size."];
+    case "shift": return ["Line up with the outline", "Follow the arrow until the outline sits on " + (two ? "both of you." : "you.")];
+    default: return [`Match: ${pose.name}`, pose.how];
+  }
+}
+function tipSay(rule) { return rule.pinned ? pinText(rule)[0] : usesSuggestion(rule) ? `Try: ${S.sugg.pose.name}` : rule.say; }
+function tipWhy(rule) { return rule.pinned ? pinText(rule)[1] : usesSuggestion(rule) ? S.sugg.pose.how : rule.why; }
 
 function pinPose(id) {
-  const pose = id && allPoses().find((p) => p.id === id);
+  const pose = id && poseById(id);
   if (S.pinRule) { S.ruleState.delete(S.pinRule.id); S.questItems.delete(S.pinRule.id); }
   S.pinned = pose ? pose.id : null;
   S.pinRule = pose ? {
-    id: "pin_" + pose.id, pinned: true, modes: ["solo", "selfie", "group"], cat: "pose", pri: -1, w: 15,
-    who: { solo: "Subject", selfie: "You", group: "Everyone" },
-    test: () => !(S.sugg && S.sugg.matched),
+    id: "pin_" + pose.id, pinned: true, pose, modes: ["solo", "selfie", "couple", "group"], cat: "pose", pri: -1, w: 15,
+    who: { solo: "Subject", selfie: "You", couple: "Both of you", group: "Everyone" },
+    test: () => (S.mode === "selfie" ? !(S.sugg && S.sugg.matched) : !(S.fit && S.fit.phase === "matched")),
     say: `Match: ${pose.name}`, why: pose.how,
   } : null;
-  S.sugg = null; questSig = "";
+  S.sugg = null; S.fit = null; S.place = null; questSig = "";
   if (pose) toast(`New goal · ${pose.name}`, true);
 }
 
 const BONES2 = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
-function drawStick(c, kp, upperOnly) {
-  const g = c.getContext("2d"), S2 = upperOnly ? 120 : 82, ox = 75, oy = upperOnly ? 215 : 120;
-  const P = (j) => [ox + kp[j].x * S2 * 0.5, oy + kp[j].y * S2 * 0.5 * 1];
+function drawStick(c, people, upperOnly) {
+  const g = c.getContext("2d"), two = people.length > 1;
+  const S2 = upperOnly ? 60 : two ? 30 : 41, ox = 75, oy = upperOnly ? 215 : two ? 118 : 120;
   g.clearRect(0, 0, c.width, c.height);
-  g.strokeStyle = "#fff"; g.lineWidth = 4; g.lineCap = "round"; g.beginPath();
-  for (const [a, b] of BONES2) if (kp[a] && kp[b]) { g.moveTo(...P(a)); g.lineTo(...P(b)); }
-  g.stroke();
-  if (kp[0]) { g.beginPath(); g.arc(...P(0), 10, 0, Math.PI * 2); g.stroke(); }
+  people.forEach((kp, i) => {
+    const P = (j) => [ox + kp[j].x * S2, oy + kp[j].y * S2];
+    g.strokeStyle = i ? "#ff5fa2" : "#fff"; g.lineWidth = 4; g.lineCap = "round"; g.beginPath();
+    for (const [a, b] of BONES2) if (kp[a] && kp[b]) { g.moveTo(...P(a)); g.lineTo(...P(b)); }
+    g.stroke();
+    if (kp[0]) { g.beginPath(); g.arc(...P(0), two ? 8 : 10, 0, Math.PI * 2); g.stroke(); }
+  });
 }
 
+const SECTIONS = {
+  solo: [["Standing", (p) => !p.prop], ["Lean or sit (needs a wall, rail, steps or ledge)", (p) => !!p.prop]],
+  selfie: [["Selfie poses", () => true]],
+  couple: [["Couples", () => true]],
+};
 function openPoseSheet() {
-  const grid = $("pose-grid"); grid.innerHTML = "";
+  const wrap = $("pose-grid"); wrap.innerHTML = "";
   $("pose-auto").setAttribute("aria-pressed", String(!S.pinned));
-  for (const p of allPoses().filter((p) => p.modes.includes(S.mode))) {
-    const b = document.createElement("button");
-    b.type = "button"; b.className = "pose-card"; b.setAttribute("aria-pressed", String(S.pinned === p.id));
-    const c = document.createElement("canvas"); c.width = 150; c.height = 200;
-    drawStick(c, p.kp, S.mode === "selfie");
-    const name = document.createElement("b"); name.textContent = p.name;
-    b.append(c, name);
-    if (p.prop) { const t = document.createElement("small"); t.textContent = "Needs " + p.prop; b.appendChild(t); }
-    b.addEventListener("click", () => { pinPose(p.id); closePoseSheet(); });
-    grid.appendChild(b);
+  $("sheet-sub").textContent = S.mode === "selfie"
+    ? "Pick a pose and its outline appears on you. Or let the coach suggest the closest one."
+    : "Pick a pose and a ghost outline appears in the frame. Step into it, then match the pose.";
+  const list = allPoses().filter((p) => p.modes.includes(S.mode));
+  for (const [title, test] of SECTIONS[S.mode] || []) {
+    const poses = list.filter(test);
+    if (!poses.length) continue;
+    const h = document.createElement("h3"); h.className = "sheet-section"; h.textContent = title;
+    const grid = document.createElement("div"); grid.className = "pose-grid";
+    for (const p of poses) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "pose-card"; b.setAttribute("aria-pressed", String(S.pinned === p.id));
+      const c = document.createElement("canvas"); c.width = 150; c.height = 200;
+      drawStick(c, p.people, S.mode === "selfie");
+      const name = document.createElement("b"); name.textContent = p.name;
+      b.append(c, name);
+      if (p.prop) { const t = document.createElement("small"); t.textContent = "Needs " + p.prop; b.appendChild(t); }
+      b.addEventListener("click", () => { pinPose(p.id); closePoseSheet(); });
+      grid.appendChild(b);
+    }
+    wrap.append(h, grid);
   }
-  if (!grid.children.length) {
+  if (!wrap.children.length) {
     const msg = document.createElement("p"); msg.className = "sheet-sub";
     msg.textContent = "Group shots are about arrangement, not one person's pose, so there's no pose list here.";
-    grid.appendChild(msg);
+    wrap.appendChild(msg);
   }
   $("pose-sheet").hidden = false;
 }
 function closePoseSheet() { $("pose-sheet").hidden = true; }
+function maybeOpenPoseSheet() {
+  if (S.mode === "group" || S.sheetSeen.has(S.mode)) return;
+  S.sheetSeen.add(S.mode);
+  openPoseSheet();
+}
 $("poses-btn").addEventListener("click", openPoseSheet);
 $("sheet-close").addEventListener("click", closePoseSheet);
 $("pose-auto").addEventListener("click", () => { pinPose(null); closePoseSheet(); });
@@ -810,41 +912,60 @@ function drawDot(x, y, r) {
   ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
 }
 
-function drawGhost(g, P, m, now) {
+function drawGhost(g, P, m, now, alpha = 1) {
   ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.95)";
+  ctx.globalAlpha = alpha;
   ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
-  ctx.setLineDash([2, 8]);
-  ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 4;
 
-  if (g.lm) {
-    const lm = g.lm, ok = (i) => (lm[i].visibility ?? 1) >= 0.5;
+  for (const [pi, person] of (g.people || []).entries()) {
+    const lm = person.lm, ok = (i) => lm[i] && (lm[i].visibility ?? 1) >= 0.5;
+    ctx.strokeStyle = pi ? "rgba(255,175,210,0.95)" : "rgba(255,255,255,0.95)";
+    ctx.setLineDash([2, 8]);
+    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 4;
     ctx.beginPath();
     for (const [a, b] of SKELETON) {
       if (!ok(a) || !ok(b)) continue;
       ctx.moveTo(...P(lm[a].x, lm[a].y)); ctx.lineTo(...P(lm[b].x, lm[b].y));
     }
     ctx.stroke();
-    const [s1x, s1y] = P(lm[11].x, lm[11].y), [s2x, s2y] = P(lm[12].x, lm[12].y);
-    const headR = Math.max(14, Math.hypot(s1x - s2x, s1y - s2y) * 0.32);
-    const [hx, hy] = P(lm[0].x, lm[0].y - 0.01);
-    ctx.beginPath(); ctx.arc(hx, hy, headR, 0, Math.PI * 2); ctx.stroke();
-    ctx.shadowBlur = 0;
+    let hx = 0, hy = 0;
+    if (ok(0) && ok(11) && ok(12)) {
+      const [s1x, s1y] = P(lm[11].x, lm[11].y), [s2x, s2y] = P(lm[12].x, lm[12].y);
+      const headR = Math.max(12, Math.hypot(s1x - s2x, s1y - s2y) * 0.32);
+      [hx, hy] = P(lm[0].x, lm[0].y - 0.01);
+      ctx.beginPath(); ctx.arc(hx, hy, headR, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.shadowBlur = 0; ctx.setLineDash([]);
 
-    const cur = m.pose && m.pose.lm;
+    const cur = person.cur, focus = person.focus || [];
     const near = (i) => {
-      if (!cur) return false;
+      if (!cur || !cur[i]) return false;
       const [ax, ay] = P(cur[i].x, cur[i].y), [bx, by] = P(lm[i].x, lm[i].y);
       return Math.hypot(ax - bx, ay - by) < 20;
     };
     for (const i of JOINTS) {
       if (!ok(i)) continue;
       const [x, y] = P(lm[i].x, lm[i].y);
-      if (g.focus.includes(i) && !near(i)) drawPending(x, y, now);
-      else drawDot(x, y, g.focus.includes(i) ? 5 : 3.5);
+      if (focus.includes(i) && !near(i)) drawPending(x, y, now);
+      else drawDot(x, y, focus.includes(i) ? 5 : 3.5);
     }
-    if (g.focus.includes(0)) {
-      if (near(0)) drawDot(hx, hy, 5); else drawPending(hx, hy, now);
+    if (focus.includes(0) && ok(0)) { if (near(0)) drawDot(hx, hy, 5); else drawPending(hx, hy, now); }
+  }
+
+  // Arrow from where they are to where the outline is.
+  if (g.arrow) {
+    const [fx, fy] = P(g.arrow.from.x, g.arrow.from.y), [tx, ty] = P(g.arrow.to.x, g.arrow.to.y);
+    const ang = Math.atan2(ty - fy, tx - fx), len = Math.hypot(tx - fx, ty - fy);
+    if (len > 24) {
+      const ex = tx - Math.cos(ang) * 10, ey = ty - Math.sin(ang) * 10;
+      ctx.strokeStyle = "#ff5fa2"; ctx.fillStyle = "#ff5fa2"; ctx.lineWidth = 5;
+      ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx - Math.cos(ang - 0.45) * 22, ty - Math.sin(ang - 0.45) * 22);
+      ctx.lineTo(tx - Math.cos(ang + 0.45) * 22, ty - Math.sin(ang + 0.45) * 22);
+      ctx.closePath(); ctx.fill();
     }
   }
 
@@ -852,11 +973,13 @@ function drawGhost(g, P, m, now) {
     const b = g.faceBox;
     const [ax, ay] = P(b.x0, b.y0), [bx, by] = P(b.x1, b.y1);
     const x0 = Math.min(ax, bx), w = Math.abs(bx - ax), y0 = ay, h = by - ay;
+    ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.setLineDash([2, 8]);
+    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 4;
     ctx.beginPath();
     ctx.ellipse(x0 + w / 2, y0 + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.shadowBlur = 0;
-    const f = S.tip.id === "edge_face" ? m.group.edgeFace : m.mainFace;
+    ctx.shadowBlur = 0; ctx.setLineDash([]);
+    const f = S.tip && S.tip.id === "edge_face" ? m.group.edgeFace : m.mainFace;
     const [cx, cy] = P((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2);
     if (f) {
       const [fx, fy] = P(f.cx, f.cy);
@@ -872,7 +995,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // Test hook: open with ?debug to reach app state from the browser console.
-if (new URLSearchParams(location.search).has("debug")) window.__poseCoach = { S, draw, renderHud, computeMetrics, poseMetrics, RULES, trackQuest, renderPlayer, updateSuggestion, openPoseSheet };
+if (new URLSearchParams(location.search).has("debug")) window.__poseCoach = { S, draw, renderHud, computeMetrics, poseMetrics, RULES, trackQuest, renderPlayer, updateSuggestion, openPoseSheet, pinPose, frameGhost, evaluate };
 
 // Start screen: show the player's level and streak if they've played before.
 (function renderStartPlayer() {

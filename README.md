@@ -14,7 +14,15 @@ Everything runs on the phone. No photos or video leave the device, and there's n
 
 **Game layer:** every problem the coach spots goes on a quest checklist. Fixing one earns XP (pose 20, lighting 15, framing and angle 10, polish 5) with a pop-up, and each photo earns XP from its score (+25 bonus at 85 or above). XP fills levels (Newbie → Snapper → Framer → Pose Pro → Light Chaser → Cover Star → Legend), and taking a photo on consecutive days builds a streak. Progress is saved in the phone's browser only.
 
-**Pose library:** 15 proven poses (hand on hip, hands in pockets, arms crossed, weight on the back leg, walking toward the camera, looking over the shoulder, hand in hair, fixing the collar, crossed ankles, hand near the chin, shoulder turned in, and lean or sit poses for walls, rails, steps and ledges). The coach compares your body to every pose and suggests the closest one, so the change is easy; matching a pose earns +20 XP. Tap **Poses** to pick one yourself, for example "Lean on a wall" when there's a wall nearby. Browse them all at `tools/poses.html`.
+**Pose library:** 22 poses.
+- Solo, standing: hand on hip, hands in pockets, arms crossed, weight on the back leg, walk toward the camera, look over your shoulder, hand in hair, fix your collar, cross your ankles, shoulder turned in.
+- Solo, with something in the scene: lean on a wall, lean on a fence or rail, sit on steps, sit on a ledge.
+- Selfie: arms crossed, look over your shoulder, hand in hair, fix your collar, hand near your chin, shoulder turned in.
+- Couple: side by side with arms around each other, hug from behind, walk hand in hand, forehead to forehead, head on the shoulder, back to back, face each other holding hands.
+
+**Pick a pose before you shoot:** the pose list opens when the camera starts (and from the **Poses** button). Pick one and a **ghost outline appears in the frame** before anyone is in it. The coach then walks you through it: step into the outline, photographer step closer or back until they're the same size, follow the arrow to line up, then match the pose. Joints that still need to move glow pink; matching earns +20 XP, and auto-capture waits until you've matched. Or tap "Let the coach pick" and it suggests the pose closest to how you're standing. Browse them all at `tools/poses.html`.
+
+**Couple mode:** tracks two people at once with the back camera, for someone else to take the photo.
 
 **Adding poses from photos:** open `tools/add-poses.html`, drop in photos, and it extracts the body skeleton in your browser and outputs JSON to add to `data/poses.json`. Only the skeleton is kept, never the photo. Use your own photos or freely licensed ones (Unsplash, Pexels, Wikimedia Commons) and fill in the source. Don't use photos saved from Instagram or Pinterest: they're copyrighted and the people in them didn't agree.
 

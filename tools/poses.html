@@ -31,15 +31,18 @@ for (const p of allPoses()) {
   const card = document.createElement("div"); card.className = "card";
   const c = document.createElement("canvas"); c.width = 300; c.height = 400;
   const g = c.getContext("2d");
-  const S = 95, ox = 150, oy = 230; // torso length in px, hip centre
-  const P = (j) => [ox + p.kp[j].x * S, oy + p.kp[j].y * S];
-  g.strokeStyle = "#fff"; g.lineWidth = 6; g.lineCap = "round";
-  g.beginPath();
-  for (const [a, b] of BONES) if (p.kp[a] && p.kp[b]) { g.moveTo(...P(a)); g.lineTo(...P(b)); }
-  g.stroke();
-  if (p.kp[0]) { g.beginPath(); g.arc(...P(0), 22, 0, Math.PI * 2); g.stroke(); }
-  g.fillStyle = "#3ee6b0";
-  for (const j of [13, 14, 15, 16, 25, 26, 27, 28]) if (p.kp[j]) { g.beginPath(); g.arc(...P(j), 6, 0, Math.PI * 2); g.fill(); }
+  const two = p.people.length > 1;
+  const S = two ? 72 : 95, ox = 150, oy = two ? 220 : 230; // torso length in px, hip centre
+  p.people.forEach((kp, i) => {
+    const P = (j) => [ox + kp[j].x * S, oy + kp[j].y * S];
+    g.strokeStyle = i ? "#ff5fa2" : "#fff"; g.lineWidth = 5; g.lineCap = "round";
+    g.beginPath();
+    for (const [a, b] of BONES) if (kp[a] && kp[b]) { g.moveTo(...P(a)); g.lineTo(...P(b)); }
+    g.stroke();
+    if (kp[0]) { g.beginPath(); g.arc(...P(0), two ? 17 : 22, 0, Math.PI * 2); g.stroke(); }
+    g.fillStyle = "#3ee6b0";
+    for (const j of [13, 14, 15, 16, 25, 26, 27, 28]) if (kp[j]) { g.beginPath(); g.arc(...P(j), 5, 0, Math.PI * 2); g.fill(); }
+  });
   card.appendChild(c);
   const name = document.createElement("b"); name.textContent = p.name; card.appendChild(name);
   const how = document.createElement("small"); how.textContent = p.how; card.appendChild(how);
