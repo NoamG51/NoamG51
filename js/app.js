@@ -2,6 +2,7 @@ import { FilesetResolver, PoseLandmarker, FaceLandmarker } from "../vendor/media
 import { poseMetrics, faceMetrics, computeMetrics, LightMeter, TiltSensor } from "./analyze.js";
 import { RULES, CAT_LABEL, rank } from "./rules.js";
 import { SKELETON } from "./ghost.js";
+import { Quest, FIX_XP, FIX_CHEER, QUEST_NAME } from "./quest.js";
 
 const $ = (id) => document.getElementById(id);
 const WASM = new URL("../vendor/mediapipe/wasm", import.meta.url).href;
@@ -28,7 +29,10 @@ const S = {
   photos: [], viewIdx: 0,
   running: false,
   auto: true,
+  quest: new Quest(),
+  questItems: new Map(), // rule id -> { rule, done, doneAt, xp }
 };
+const GATE = new Set(["no_person", "no_face"]); // must clear first; not part of the checklist
 
 // ---------------- Start ----------------
 $("start-btn").addEventListener("click", start);
@@ -63,6 +67,7 @@ async function start() {
   $("cam").hidden = false;
   setModeUI();
   setVoiceUI();
+  renderPlayer();
   resizeOverlay();
   S.running = true;
   requestAnimationFrame(loop);
@@ -108,6 +113,7 @@ document.querySelectorAll(".seg button").forEach((b) =>
     S.mode = b.dataset.mode;
     resetCoaching();
     setModeUI();
+    renderPlayer();
     const want = S.mode === "solo" ? "environment" : "user";
     if (want !== S.facing) { S.facing = want; await openCamera().catch(console.error); }
   }),
@@ -129,17 +135,19 @@ function setVoiceUI() { $("voice-btn").setAttribute("aria-pressed", String(S.voi
 $("tip-skip").addEventListener("click", () => {
   if (!S.tip) return;
   S.skipped.add(S.tip.id);
+  S.questItems.delete(S.tip.id);
   S.tip = null;
   updateTip(performance.now());
 });
 $("shutter").addEventListener("click", () => capture());
+
 $("auto-btn").addEventListener("click", () => {
   S.auto = !S.auto;
   $("auto-btn").setAttribute("aria-pressed", String(S.auto));
 });
 
 function resetCoaching() {
-  S.ruleState.clear(); S.skipped.clear(); S.active = [];
+  S.ruleState.clear(); S.skipped.clear(); S.active = []; S.questItems.clear();
   S.tip = null; S.goodSince = 0; S.countdownAt = 0;
   S.poseRes = null; S.faceRes = null;
   hideCountdown();
@@ -192,6 +200,7 @@ function evaluate(now) {
   }
   active.sort((a, b) => rank(a) - rank(b));
   S.active = active;
+  trackQuest(active, now);
 
   const penalty = active.reduce((s, r) => s + r.w, 0);
   const target = Math.max(0, 100 - penalty);
@@ -225,34 +234,108 @@ function setTip(rule, now) {
 }
 
 function renderHud() {
-  const now = performance.now();
-  const tip = $("tip");
   const score = Math.round(S.score ?? 0);
-  if (now < S.niceUntil) {
-    tip.className = "tip nice";
-    $("tip-eyebrow").textContent = "✓ Matched";
-    $("tip-say").textContent = "That's it";
-    $("tip-why").textContent = "";
-    $("tip-skip").hidden = true;
-  } else if (S.tip) {
-    tip.className = "tip";
-    const who = S.tip.who[S.mode] || "";
-    const lead = S.tip.ghost ? (S.tip.cat === "pose" ? "Match the outline" : "Line up with the outline") : CAT_LABEL[S.tip.cat];
-    $("tip-eyebrow").textContent = who ? `${lead} · ${who}` : lead;
-    $("tip-say").textContent = S.tip.say;
-    $("tip-why").textContent = S.tip.why;
-    $("tip-skip").hidden = false;
-  } else {
-    tip.className = "tip nice";
-    $("tip-eyebrow").textContent = "Looking good";
-    $("tip-say").textContent = S.auto ? "Hold still…" : "Take the shot";
-    $("tip-why").textContent = S.skipped.size ? `${S.skipped.size} skipped tip${S.skipped.size > 1 ? "s" : ""} hidden` : "";
-    $("tip-skip").hidden = true;
+  $("score").textContent = String(score);
+  $("shutter").setAttribute("aria-label", `Take photo. Score ${score}`);
+  renderQuest();
+}
+
+// ---------------- Quest (game layer) ----------------
+function trackQuest(active, now) {
+  const ids = new Set(active.map((r) => r.id));
+  for (const r of active) {
+    if (GATE.has(r.id) || S.skipped.has(r.id)) continue;
+    const q = S.questItems.get(r.id);
+    if (!q) S.questItems.set(r.id, { rule: r, done: false, doneAt: 0, xp: 0 });
+    else if (q.done) q.done = false;            // came back: open again, no extra XP later
   }
-  const C = 270.18;
-  $("ring-fill").style.strokeDashoffset = String(C * (1 - score / 100));
-  $("score").textContent = `${score}%`;
-  $("shutter").setAttribute("aria-label", `Take photo. Score ${score} percent`);
+  for (const [id, q] of S.questItems) {
+    if (q.done || ids.has(id)) continue;
+    q.done = true; q.doneAt = now;
+    if (!q.xp) {
+      q.xp = FIX_XP[q.rule.cat] || 5;
+      const lv = S.quest.addXP(q.xp);
+      toast(`+${q.xp} XP · ${FIX_CHEER[q.rule.cat]}`);
+      if (lv) toast(`Level ${lv} · ${S.quest.title}!`, true);
+      renderPlayer();
+    }
+  }
+}
+
+let questSig = "";
+function renderQuest() {
+  const items = [...S.questItems.values()];
+  const done = items.filter((q) => q.done).sort((a, b) => a.doneAt - b.doneAt);
+  const open = items.filter((q) => !q.done).sort((a, b) => rank(a.rule) - rank(b.rule));
+  const gate = S.active.find((r) => GATE.has(r.id));
+  const now = S.tip && open.find((q) => q.rule === S.tip);
+
+  const rows = [];
+  if (gate) rows.push({ kind: "hint", text: gate.id === "no_face" ? "Get your face in the frame to start the quest" : "Get someone in the frame to start the quest" });
+  else {
+    done.slice(-1).forEach((q) => rows.push({ kind: "done", text: q.rule.say, pts: `+${q.xp}` }));
+    if (now) rows.push({ kind: "now", text: now.rule.say, why: now.rule.why, pts: `+${FIX_XP[now.rule.cat] || 5}` });
+    open.filter((q) => q !== now).slice(0, now ? 1 : 2).forEach((q) => rows.push({ kind: "open", text: q.rule.say, pts: `+${FIX_XP[q.rule.cat] || 5}` }));
+    if (!open.length) rows.push({ kind: "clear", text: S.auto ? "All clear! Hold still…" : "All clear! Take the shot" });
+  }
+  const count = gate ? "" : `${done.length} / ${items.length}`;
+  const sig = JSON.stringify([QUEST_NAME[S.mode], count, rows]);
+  if (sig === questSig) return;
+  questSig = sig;
+
+  $("quest-name").textContent = `Quest: ${QUEST_NAME[S.mode]}`;
+  $("quest-count").textContent = count;
+  const ul = $("quest-list"); ul.innerHTML = "";
+  for (const r of rows) {
+    const li = document.createElement("li");
+    li.className = r.kind;
+    if (r.kind === "hint" || r.kind === "clear") { li.textContent = r.text; ul.appendChild(li); continue; }
+    const box = document.createElement("span"); box.className = "box"; box.textContent = r.kind === "done" ? "✓" : "";
+    const txt = document.createElement("span"); txt.className = "txt";
+    if (r.kind === "now") {
+      const say = document.createElement("span"); say.className = "say"; say.textContent = r.text;
+      const why = document.createElement("span"); why.className = "why"; why.textContent = r.why;
+      txt.append(say, why);
+    } else txt.textContent = r.text;
+    const pts = document.createElement("span"); pts.className = "pts"; pts.textContent = r.pts;
+    li.append(box, txt, pts);
+    ul.appendChild(li);
+  }
+  $("tip-skip").hidden = !now;
+}
+
+function renderPlayer() {
+  const q = S.quest;
+  $("lvl-num").textContent = String(q.level);
+  $("lvl-title").textContent = q.title;
+  $("lvl-sub").textContent = `${MODE_NAME[S.mode]} quest`;
+  $("xp-fill").style.width = `${(q.into / q.size) * 100}%`;
+  $("xpbar").setAttribute("aria-valuemax", String(q.size));
+  $("xpbar").setAttribute("aria-valuenow", String(q.into));
+  $("xp-text").textContent = `${q.into} / ${q.size} XP`;
+  $("xp-next").textContent = `Next: Level ${q.level + 1}`;
+  const st = q.streak;
+  $("streak").hidden = !st;
+  $("streak-text").textContent = `${st}-day streak`;
+}
+
+// Pop-up messages, one after another.
+const toasts = [];
+let toastBusy = false;
+function toast(text, pink) {
+  toasts.push({ text, pink });
+  if (!toastBusy) nextToast();
+}
+function nextToast() {
+  const t = toasts.shift();
+  if (!t) { toastBusy = false; return; }
+  toastBusy = true;
+  const el = $("toast");
+  el.textContent = t.text;
+  el.className = "toast" + (t.pink ? " pink" : "");
+  void el.offsetWidth;
+  el.classList.add("go");
+  setTimeout(nextToast, 1800);
 }
 
 // ---------------- Auto-capture ----------------
@@ -260,7 +343,7 @@ function updateAutoCapture(now) {
   const auto = S.auto;
   const blocking = S.active.some((r) => r.cat === "framing" || r.id === "eyes_closed");
   const ready = auto && $("viewer").hidden && S.metrics.present && !blocking && (S.score ?? 0) >= 85 && now > S.cooldownUntil;
-  document.querySelector(".shutter-wrap").classList.toggle("ready", ready);
+  $("shutter").classList.toggle("ready", ready);
   if (!ready) { S.goodSince = 0; if (S.countdownAt) { S.countdownAt = 0; hideCountdown(); } return; }
   if (!S.goodSince) S.goodSince = now;
   if (!S.countdownAt && now - S.goodSince > 600) S.countdownAt = now;
@@ -283,6 +366,10 @@ function capture() {
   c.getContext("2d").drawImage(video, 0, 0);
   const f = $("flash"); f.classList.remove("go"); void f.offsetWidth; f.classList.add("go");
   const review = buildReview();
+  const res = S.quest.photo(review.score);
+  review.xp = res.xp; review.levelUp = res.levelUp; review.streak = res.streakUp ? S.quest.streak : 0;
+  S.questItems.clear(); questSig = "";
+  renderPlayer();
   c.toBlob((blob) => {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
@@ -373,6 +460,7 @@ function openViewer(i) {
   document.querySelector(".review-ring").classList.toggle("great", r.score >= 85);
   $("review-kicker").textContent = MODE_NAME[p.mode];
   $("review-summary").textContent = r.summary;
+  $("review-xp").textContent = r.xp ? `+${r.xp} XP` + (r.levelUp ? ` · Level ${r.levelUp}!` : "") + (r.streak ? ` · ${r.streak}-day streak` : "") : "";
   const prev = S.photos[i - 1], delta = $("review-delta");
   if (prev) {
     const d = r.score - prev.score;
@@ -533,7 +621,7 @@ function drawLevel(tilt, W, r, now) {
   if (fade <= 0) { S.levelTiltedAt = 0; S.levelOkAt = 0; return; }
 
   const level = off <= 1.5;
-  const color = level ? "#7ee2a8" : "#ffffff";
+  const color = level ? "#3ee6b0" : "#ffffff";
   const cx = W / 2, cy = r.y + r.h * 0.42;
   const len = Math.min(W, r.h) * 0.24;
   const ang = (-tilt.roll * Math.PI) / 180;
@@ -598,9 +686,9 @@ function drawPending(x, y, now) {
   const pulse = 1 + 0.18 * Math.sin(now / 200);
   ctx.save();
   ctx.setLineDash([]);
-  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  ctx.fillStyle = "rgba(255,95,162,0.3)";
   ctx.beginPath(); ctx.arc(x, y, 19 * pulse, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5;
+  ctx.strokeStyle = "#ff5fa2"; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.stroke();
   ctx.restore();
 }
@@ -671,4 +759,20 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // Test hook: open with ?debug to reach app state from the browser console.
-if (new URLSearchParams(location.search).has("debug")) window.__poseCoach = { S, draw, renderHud, computeMetrics, poseMetrics, RULES };
+if (new URLSearchParams(location.search).has("debug")) window.__poseCoach = { S, draw, renderHud, computeMetrics, poseMetrics, RULES, trackQuest, renderPlayer };
+
+// Start screen: show the player's level and streak if they've played before.
+(function renderStartPlayer() {
+  const q = S.quest, el = $("start-player");
+  if (!q.st.xp) return;
+  const badge = document.createElement("span"); badge.className = "lvl-badge"; badge.textContent = String(q.level);
+  const txt = document.createElement("span"); txt.className = "lvl-text";
+  const t1 = document.createElement("span"); t1.className = "lvl-title"; t1.textContent = q.title;
+  const t2 = document.createElement("span"); t2.className = "lvl-sub"; t2.textContent = `${q.st.xp} XP · best photo ${q.st.best}`;
+  txt.append(t1, t2);
+  el.append(badge, txt);
+  if (q.streak) {
+    const st = document.createElement("span"); st.className = "streak"; st.textContent = `${q.streak}-day streak`;
+    el.appendChild(st);
+  }
+})();
