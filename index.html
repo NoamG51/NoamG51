@@ -65,6 +65,7 @@
         <button type="button" data-mode="group">Group</button>
       </div>
       <div class="tool-btns">
+        <button type="button" id="poses-btn" class="chip-btn" aria-haspopup="dialog">Poses</button>
         <button type="button" id="auto-btn" class="chip-btn" aria-pressed="true" aria-label="Auto-capture">Auto</button>
         <button type="button" id="voice-btn" class="round" aria-pressed="false" aria-label="Spoken tips">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path class="wave" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>
@@ -81,6 +82,16 @@
   <div id="quest" class="quest card" aria-live="polite">
     <div class="quest-head"><span id="quest-name" class="quest-name">Quest</span><span id="quest-count" class="quest-count"></span></div>
     <ul id="quest-list" class="quest-list"></ul>
+  </div>
+
+  <div id="pose-sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+    <div class="sheet-head">
+      <span id="sheet-title" class="sheet-title">Pick a pose</span>
+      <button type="button" id="sheet-close" class="chip-btn">Close</button>
+    </div>
+    <p class="sheet-sub">Pick one and its outline appears on you. Or let the coach suggest the pose closest to how you're standing.</p>
+    <button type="button" id="pose-auto" class="pose-auto">Let the coach pick</button>
+    <div id="pose-grid" class="pose-grid"></div>
   </div>
 
   <footer class="controls">
@@ -113,6 +124,13 @@
         <span id="review-delta" class="review-delta"></span>
         <span id="review-xp" class="review-xp"></span>
       </div>
+    </div>
+
+    <div id="crowd-block" class="review-block">
+      <div class="review-label">Crowd score</div>
+      <div class="crowd-row"><b id="crowd-num">…</b><span id="crowd-word">Rating your photo…</span></div>
+      <div class="crowd-bar" aria-hidden="true"><div id="crowd-fill"></div><span class="crowd-avg"></span></div>
+      <p class="fineprint">What a model trained on 255,000 photos rated by photographers predicts people would give this photo, out of 10. Most photos land between 4 and 6; the line marks an average photo.</p>
     </div>
 
     <div id="review-fixes-block" class="review-block">

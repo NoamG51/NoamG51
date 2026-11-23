@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add Poses</title>
+<style>
+  :root { --bg: #120a2b; --card: #24164d; --fg: #fff; --muted: #b9aef0; --mint: #3ee6b0; --pink: #ff5fa2; --ink: #120a2b; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 Rubik, system-ui, sans-serif; padding: 24px max(16px, env(safe-area-inset-left)) 60px; }
+  main { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 1.8rem; }
+  p { margin: 0; color: var(--muted); max-width: 72ch; }
+  .drop { border: 2px dashed var(--muted); border-radius: 16px; padding: 28px; text-align: center; cursor: pointer; }
+  .drop.over { border-color: var(--mint); background: rgba(62,230,176,.08); }
+  .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .rules { background: var(--card); border-radius: 14px; padding: 14px 16px; }
+  .rules ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  .list { display: flex; flex-direction: column; gap: 12px; }
+  .item { background: var(--card); border-radius: 14px; padding: 12px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
+  .item.bad { opacity: .6; }
+  .pics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pics img, .pics canvas { width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 8px; background: #1a1040; }
+  .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .fields label { display: flex; flex-direction: column; gap: 3px; font-size: .8rem; color: var(--muted); }
+  .fields .wide { grid-column: 1 / -1; }
+  input[type=text], select { font: inherit; color: var(--fg); background: #1a1040; border: 1px solid #4b3d8a; border-radius: 8px; padding: 7px 9px; }
+  .status { font-size: .85rem; color: var(--pink); }
+  .ok { color: var(--mint); }
+  button { font: 700 15px Rubik, system-ui, sans-serif; border: 0; border-radius: 12px; padding: 12px 18px; background: var(--mint); color: var(--ink); cursor: pointer; }
+  button.ghost { background: var(--card); color: var(--fg); }
+  textarea { width: 100%; min-height: 160px; font: 12px ui-monospace, Menlo, monospace; color: var(--fg); background: #1a1040; border: 1px solid #4b3d8a; border-radius: 10px; padding: 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  @media (max-width: 640px) { .item { grid-template-columns: minmax(0, 1fr); } .fields { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Add poses from photos</h1>
+  <p>Drop in photos of great poses. The tool finds the body skeleton in each one, right here in your browser, and turns it into a pose for the coach. Only the skeleton is kept, never the photo.</p>
+
+  <div class="rules">
+    <b>Use photos you're allowed to use</b>
+    <ul>
+      <li>Your own photos, or freely licensed ones from Unsplash, Pexels or Wikimedia Commons. Put the photo's page link in "Source" so it's credited.</li>
+      <li>Not photos saved from Instagram, Pinterest or other people's accounts: those are copyrighted and the people in them didn't agree.</li>
+      <li>Best results: one person, whole body in view, facing roughly toward the camera.</li>
+    </ul>
+  </div>
+
+  <label class="drop" id="drop" for="files">
+    <b>Drop photos here, or tap to choose</b><br><small>JPEG or PNG, as many as you like</small>
+    <input type="file" id="files" accept="image/*" multiple>
+  </label>
+  <p id="model-status" class="status">Loading the body tracker…</p>
+
+  <div class="list" id="list"></div>
+
+  <div class="row">
+    <button type="button" id="export">Make JSON</button>
+    <span class="status" id="export-status"></span>
+  </div>
+  <textarea id="out" readonly placeholder="Your new poses will appear here as JSON. Add them to data/poses.json in the repo (inside the [ ] list), or send them to Claude to add."></textarea>
+  <div class="row"><button type="button" class="ghost" id="copy">Copy JSON</button></div>
+</main>
+
+<script type="module">
+import { FilesetResolver, PoseLandmarker } from "../vendor/mediapipe/vision_bundle.mjs";
+import { normalize, JOINTS } from "../js/poses.js";
+
+const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+const items = [];
+let landmarker = null;
+
+try {
+  const fileset = await FilesetResolver.forVisionTasks(new URL("../vendor/mediapipe/wasm", import.meta.url).href);
+  landmarker = await PoseLandmarker.createFromOptions(fileset, {
+    baseOptions: { modelAssetPath: new URL("../models/pose_landmarker_lite.task", import.meta.url).href },
+    runningMode: "IMAGE", numPoses: 2,
+  });
+  setStatus("model-status", "Ready. Add some photos.", true);
+} catch (e) {
+  setStatus("model-status", "Couldn't load the body tracker: " + e.message);
+}
+
+function setStatus(id, text, ok) { const el = document.getElementById(id); el.textContent = text; el.className = "status" + (ok ? " ok" : ""); }
+
+const drop = document.getElementById("drop");
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => handle([...e.dataTransfer.files]));
+document.getElementById("files").addEventListener("change", (e) => { handle([...e.target.files]); e.target.value = ""; });
+
+async function handle(files) {
+  for (const f of files.filter((f) => f.type.startsWith("image/"))) await addPhoto(f);
+}
+
+async function addPhoto(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  await new Promise((r, j) => { img.onload = r; img.onerror = j; img.src = url; }).catch(() => null);
+  const item = { file: file.name, url, kp: null, problem: null };
+  if (!landmarker) item.problem = "Body tracker not loaded.";
+  else {
+    const res = landmarker.detect(img);
+    const people = res.landmarks || [];
+    if (!people.length) item.problem = "No person found.";
+    else if (people.length > 1) item.problem = "More than one person. Use photos with one person.";
+    else {
+      const n = normalize(people[0], img.naturalWidth / img.naturalHeight);
+      const lm = people[0];
+      const full = [23, 24, 25, 26].every((j) => (lm[j].visibility ?? 1) > 0.5);
+      if (!n || n.upperOnly || !full) item.problem = "Need the body down to at least the knees.";
+      else {
+        item.kp = {};
+        for (const j of JOINTS) if (n.kp[j]) item.kp[j] = { x: +n.kp[j].x.toFixed(3), y: +n.kp[j].y.toFixed(3) };
+      }
+    }
+  }
+  items.push(item);
+  render(item);
+}
+
+function render(item) {
+  const el = document.createElement("div");
+  el.className = "item" + (item.kp ? "" : " bad");
+  const pics = document.createElement("div"); pics.className = "pics";
+  const img = document.createElement("img"); img.src = item.url; img.alt = item.file;
+  const c = document.createElement("canvas"); c.width = 300; c.height = 400;
+  pics.append(img, c);
+  if (item.kp) drawStick(c, item.kp);
+  el.appendChild(pics);
+
+  const fields = document.createElement("div"); fields.className = "fields";
+  if (!item.kp) {
+    const p = document.createElement("p"); p.className = "status wide"; p.textContent = `${item.file}: ${item.problem}`;
+    fields.appendChild(p);
+  } else {
+    const field = (label, key, type = "text", opts) => {
+      const l = document.createElement("label"); l.textContent = label;
+      let input;
+      if (opts) { input = document.createElement("select"); opts.forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; input.appendChild(o); }); }
+      else { input = document.createElement("input"); input.type = type; }
+      input.addEventListener("input", () => { item[key] = input.value; });
+      item[key] = input.value;
+      l.appendChild(input); return l;
+    };
+    const name = field("Pose name (e.g. Hands behind head)", "name"); name.classList.add("wide");
+    const how = field("How to do it, one sentence", "how"); how.classList.add("wide");
+    fields.append(name, how,
+      field("Shot type", "modes", "text", [["solo", "Solo"], ["solo,selfie", "Solo and selfie"]]),
+      field("Needs", "prop", "text", [["", "Nothing"], ["wall", "A wall"], ["rail", "A fence or rail"], ["steps", "Steps"], ["ledge", "A ledge"], ["seat", "Something to sit on"]]));
+    const src = field("Source (photo page link, or 'own photo')", "source"); src.classList.add("wide");
+    const lic = field("License", "license", "text", [["Unsplash License", "Unsplash License"], ["Pexels License", "Pexels License"], ["CC BY", "CC BY"], ["CC BY-SA", "CC BY-SA"], ["CC0", "CC0 / public domain"], ["own", "My own photo"]]);
+    fields.appendChild(lic);
+  }
+  el.appendChild(fields);
+  document.getElementById("list").appendChild(el);
+}
+
+function drawStick(c, kp) {
+  const g = c.getContext("2d"), S = 95, ox = 150, oy = 230, P = (j) => [ox + kp[j].x * S, oy + kp[j].y * S];
+  g.strokeStyle = "#fff"; g.lineWidth = 6; g.lineCap = "round"; g.beginPath();
+  for (const [a, b] of BONES) if (kp[a] && kp[b]) { g.moveTo(...P(a)); g.lineTo(...P(b)); }
+  g.stroke();
+  if (kp[0]) { g.beginPath(); g.arc(...P(0), 22, 0, Math.PI * 2); g.stroke(); }
+}
+
+document.getElementById("export").addEventListener("click", () => {
+  const good = items.filter((i) => i.kp);
+  const missing = good.filter((i) => !i.name || !i.how || !i.source);
+  if (!good.length) return setStatus("export-status", "No usable photos yet.");
+  if (missing.length) return setStatus("export-status", `Fill in name, how-to and source for ${missing.length} pose${missing.length > 1 ? "s" : ""} first.`);
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40);
+  const out = good.map((i) => ({
+    id: "photo_" + slug(i.name), name: i.name, how: i.how,
+    modes: i.modes.split(","), prop: i.prop || null,
+    source: i.source, license: i.license, kp: i.kp,
+  }));
+  document.getElementById("out").value = JSON.stringify(out, null, 1);
+  setStatus("export-status", `${out.length} pose${out.length > 1 ? "s" : ""} ready.`, true);
+});
+document.getElementById("copy").addEventListener("click", async () => {
+  const t = document.getElementById("out");
+  try { await navigator.clipboard.writeText(t.value); setStatus("export-status", "Copied.", true); }
+  catch { t.select(); setStatus("export-status", "Select-all done. Copy it with your keyboard."); }
+});
+</script>
+</body>
+</html>

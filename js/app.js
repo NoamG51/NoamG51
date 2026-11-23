@@ -3,6 +3,8 @@ import { poseMetrics, faceMetrics, computeMetrics, LightMeter, TiltSensor } from
 import { RULES, CAT_LABEL, rank } from "./rules.js";
 import { SKELETON } from "./ghost.js";
 import { Quest, FIX_XP, FIX_CHEER, QUEST_NAME } from "./quest.js";
+import { suggest, placeOnPerson, worstJoints, allPoses, loadExtraPoses } from "./poses.js";
+import { crowdScore, preloadCrowdScore } from "./aesthetic.js";
 
 const $ = (id) => document.getElementById(id);
 const WASM = new URL("../vendor/mediapipe/wasm", import.meta.url).href;
@@ -31,6 +33,7 @@ const S = {
   auto: true,
   quest: new Quest(),
   questItems: new Map(), // rule id -> { rule, done, doneAt, xp }
+  sugg: null, suggAt: 0, pinned: null, pinRule: null, matchedPoses: new Set(), matchRun: 0,
 };
 const GATE = new Set(["no_person", "no_face"]); // must clear first; not part of the checklist
 
@@ -51,6 +54,7 @@ async function start() {
     await openCamera();
     status.textContent = "Loading the coach (about 25 MB the first time)…";
     await loadModels();
+    await loadExtraPoses();
   } catch (e) {
     console.error(e);
     btn.disabled = false;
@@ -70,6 +74,7 @@ async function start() {
   renderPlayer();
   resizeOverlay();
   S.running = true;
+  setTimeout(() => preloadCrowdScore().catch(() => {}), 2500);
   requestAnimationFrame(loop);
 }
 
@@ -112,6 +117,8 @@ document.querySelectorAll(".seg button").forEach((b) =>
     if (b.dataset.mode === S.mode) return;
     S.mode = b.dataset.mode;
     resetCoaching();
+    if (S.pinned && !allPoses().some((p) => p.id === S.pinned && p.modes.includes(S.mode))) pinPose(null);
+    S.matchedPoses.clear();
     setModeUI();
     renderPlayer();
     const want = S.mode === "solo" ? "environment" : "user";
@@ -181,6 +188,7 @@ function detect(video, now) {
   let faces = faceMetrics(S.faceRes);
   if (S.mode !== "group" && faces.length > 1) faces = [faces.sort((a, b) => b.w - a.w)[0]];
   S.metrics = computeMetrics({ mode: S.mode, pose, faces, meter: S.meter, tilt: S.tilt.read(), aspect });
+  updateSuggestion(now, aspect);
   evaluate(now);
 }
 
@@ -188,7 +196,7 @@ function detect(video, now) {
 function evaluate(now) {
   const m = S.metrics;
   const active = [];
-  for (const r of RULES) {
+  for (const r of S.pinRule ? [S.pinRule, ...RULES] : RULES) {
     if (!r.modes.includes(S.mode)) continue;
     let fail = false;
     try { fail = !!r.test(m); } catch { fail = false; }
@@ -230,7 +238,7 @@ function updateTip(now) {
 
 function setTip(rule, now) {
   S.tip = rule; S.tipShownAt = now;
-  if (rule) speak(rule.say);
+  if (rule) speak(tipSay(rule));
 }
 
 function renderHud() {
@@ -274,8 +282,8 @@ function renderQuest() {
   if (gate) rows.push({ kind: "hint", text: gate.id === "no_face" ? "Get your face in the frame to start the quest" : "Get someone in the frame to start the quest" });
   else {
     done.slice(-1).forEach((q) => rows.push({ kind: "done", text: q.rule.say, pts: `+${q.xp}` }));
-    if (now) rows.push({ kind: "now", text: now.rule.say, why: now.rule.why, pts: `+${FIX_XP[now.rule.cat] || 5}` });
-    open.filter((q) => q !== now).slice(0, now ? 1 : 2).forEach((q) => rows.push({ kind: "open", text: q.rule.say, pts: `+${FIX_XP[q.rule.cat] || 5}` }));
+    if (now) rows.push({ kind: "now", text: tipSay(now.rule), why: tipWhy(now.rule), pts: `+${FIX_XP[now.rule.cat] || 5}` });
+    open.filter((q) => q !== now).slice(0, now ? 1 : 2).forEach((q) => rows.push({ kind: "open", text: tipSay(q.rule), pts: `+${FIX_XP[q.rule.cat] || 5}` }));
     if (!open.length) rows.push({ kind: "clear", text: S.auto ? "All clear! Hold still…" : "All clear! Take the shot" });
   }
   const count = gate ? "" : `${done.length} / ${items.length}`;
@@ -368,14 +376,17 @@ function capture() {
   const review = buildReview();
   const res = S.quest.photo(review.score);
   review.xp = res.xp; review.levelUp = res.levelUp; review.streak = res.streakUp ? S.quest.streak : 0;
-  S.questItems.clear(); questSig = "";
+  S.questItems.clear(); questSig = ""; S.matchedPoses.clear();
   renderPlayer();
   c.toBlob((blob) => {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
     S.photos.push({ blob, url, score: review.score, mode: S.mode, at: new Date(), review });
     renderGalleryBtn();
+    const photo = S.photos[S.photos.length - 1];
     openViewer(S.photos.length - 1);
+    crowdScore(c).then((r) => { review.crowd = r.mean; }).catch(() => { review.crowd = null; })
+      .finally(() => { if (S.photos[S.viewIdx] === photo && !$("viewer").hidden) renderCrowd(review); });
   }, "image/jpeg", 0.92);
 }
 
@@ -388,14 +399,15 @@ function buildReview() {
     let t = null;
     try { t = r.target ? r.target(m) : null; } catch {}
     const ok = t && isFinite(t.x) && isFinite(t.y);
-    return { cat: r.cat, say: r.say, why: r.why, who: r.who[S.mode] || "", x: ok ? clamp(t.x) : null, y: ok ? clamp(t.y) : null };
+    return { cat: r.cat, say: tipSay(r), why: tipWhy(r), who: r.who[S.mode] || "", x: ok ? clamp(t.x) : null, y: ok ? clamp(t.y) : null };
   });
   const cats = new Set(S.active.map((r) => r.cat));
   const working = [];
   if (m.present && !cats.has("framing")) working.push(S.mode === "group" ? "Everyone fits in the frame" : "Well framed");
   if (m.light && m.light.face != null && !cats.has("lighting")) working.push("Good light on the face");
   if (!cats.has("angle") && (m.tilt || m.mainFace)) working.push("Flattering camera angle");
-  if (m.pose && !cats.has("pose") && S.mode !== "group") working.push("Relaxed, natural pose");
+  if (S.sugg && S.sugg.matched) working.unshift(`Pose: ${S.sugg.pose.name}`);
+  else if (m.pose && !cats.has("pose") && S.mode !== "group") working.push("Relaxed, natural pose");
   if (m.faces && m.faces.length && !m.anyBlink) working.push(m.faces.length > 1 ? "Everyone's eyes are open" : "Eyes open");
 
   const pct = (v) => (v == null ? null : Math.round(v * 100));
@@ -509,6 +521,7 @@ function openViewer(i) {
     chips.appendChild(s);
   });
   chips.parentElement.hidden = !r.readouts.length;
+  renderCrowd(r);
 
   // Session strip
   const strip = $("viewer-strip"); strip.innerHTML = "";
@@ -597,7 +610,7 @@ function draw(now) {
   // Ghost outline for the current tip, or a soft target ring
   if (m && S.tip && now >= S.niceUntil) {
     let g = null, t = null;
-    try { g = S.tip.ghost ? S.tip.ghost(m) : null; } catch {}
+    try { g = S.sugg && (S.tip.pinned || usesSuggestion(S.tip)) ? suggestionGhost() : S.tip.ghost ? S.tip.ghost(m) : null; } catch {}
     if (g) drawGhost(g, P, m, now);
     else {
       try { t = S.tip.target ? S.tip.target(m) : null; } catch {}
@@ -681,6 +694,106 @@ function drawLevel(tilt, W, r, now) {
   ctx.restore();
 }
 
+// ---------------- Pose library ----------------
+function updateSuggestion(now, aspect) {
+  const lm = S.metrics.pose && S.metrics.pose.lm;
+  if (!lm || S.mode === "group") { S.sugg = null; S.matchRun = 0; return; }
+  let s = null;
+  if (S.pinned) s = suggest(lm, aspect, S.mode, { only: S.pinned });
+  else {
+    // Keep the same suggestion for a few seconds so it doesn't flicker.
+    if (S.sugg && now - S.suggAt < 4000) s = suggest(lm, aspect, S.mode, { only: S.sugg.pose.id });
+    if (!s) { s = suggest(lm, aspect, S.mode, { prop: null }); S.suggAt = now; }
+  }
+  S.sugg = s;
+  S.matchRun = s && s.matched ? S.matchRun + 1 : 0;
+  if (s && S.matchRun === 4 && !S.matchedPoses.has(s.pose.id)) {
+    S.matchedPoses.add(s.pose.id);
+    const lv = S.quest.addXP(20);
+    toast(`+20 XP · ${s.pose.name}!`);
+    if (lv) toast(`Level ${lv} · ${S.quest.title}!`, true);
+    renderPlayer();
+  }
+}
+
+function suggestionGhost() {
+  const s = S.sugg;
+  return { lm: placeOnPerson(s.kp, s.norm, S.metrics.aspect), focus: worstJoints(s.norm, s.kp, 2) };
+}
+
+// Pose tips name the suggested library pose.
+// Only the top pose tip names the suggested pose; the others keep their own wording.
+const topPoseRule = () => S.active.find((r) => r.cat === "pose" && !r.pinned);
+const usesSuggestion = (rule) => !!S.sugg && !S.pinned && !rule.pinned && rule === topPoseRule();
+function tipSay(rule) { return usesSuggestion(rule) ? `Try: ${S.sugg.pose.name}` : rule.say; }
+function tipWhy(rule) { return usesSuggestion(rule) ? S.sugg.pose.how : rule.why; }
+
+function pinPose(id) {
+  const pose = id && allPoses().find((p) => p.id === id);
+  if (S.pinRule) { S.ruleState.delete(S.pinRule.id); S.questItems.delete(S.pinRule.id); }
+  S.pinned = pose ? pose.id : null;
+  S.pinRule = pose ? {
+    id: "pin_" + pose.id, pinned: true, modes: ["solo", "selfie", "group"], cat: "pose", pri: -1, w: 15,
+    who: { solo: "Subject", selfie: "You", group: "Everyone" },
+    test: () => !(S.sugg && S.sugg.matched),
+    say: `Match: ${pose.name}`, why: pose.how,
+  } : null;
+  S.sugg = null; questSig = "";
+  if (pose) toast(`New goal · ${pose.name}`, true);
+}
+
+const BONES2 = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+function drawStick(c, kp, upperOnly) {
+  const g = c.getContext("2d"), S2 = upperOnly ? 120 : 82, ox = 75, oy = upperOnly ? 215 : 120;
+  const P = (j) => [ox + kp[j].x * S2 * 0.5, oy + kp[j].y * S2 * 0.5 * 1];
+  g.clearRect(0, 0, c.width, c.height);
+  g.strokeStyle = "#fff"; g.lineWidth = 4; g.lineCap = "round"; g.beginPath();
+  for (const [a, b] of BONES2) if (kp[a] && kp[b]) { g.moveTo(...P(a)); g.lineTo(...P(b)); }
+  g.stroke();
+  if (kp[0]) { g.beginPath(); g.arc(...P(0), 10, 0, Math.PI * 2); g.stroke(); }
+}
+
+function openPoseSheet() {
+  const grid = $("pose-grid"); grid.innerHTML = "";
+  $("pose-auto").setAttribute("aria-pressed", String(!S.pinned));
+  for (const p of allPoses().filter((p) => p.modes.includes(S.mode))) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "pose-card"; b.setAttribute("aria-pressed", String(S.pinned === p.id));
+    const c = document.createElement("canvas"); c.width = 150; c.height = 200;
+    drawStick(c, p.kp, S.mode === "selfie");
+    const name = document.createElement("b"); name.textContent = p.name;
+    b.append(c, name);
+    if (p.prop) { const t = document.createElement("small"); t.textContent = "Needs " + p.prop; b.appendChild(t); }
+    b.addEventListener("click", () => { pinPose(p.id); closePoseSheet(); });
+    grid.appendChild(b);
+  }
+  if (!grid.children.length) {
+    const msg = document.createElement("p"); msg.className = "sheet-sub";
+    msg.textContent = "Group shots are about arrangement, not one person's pose, so there's no pose list here.";
+    grid.appendChild(msg);
+  }
+  $("pose-sheet").hidden = false;
+}
+function closePoseSheet() { $("pose-sheet").hidden = true; }
+$("poses-btn").addEventListener("click", openPoseSheet);
+$("sheet-close").addEventListener("click", closePoseSheet);
+$("pose-auto").addEventListener("click", () => { pinPose(null); closePoseSheet(); });
+
+function renderCrowd(r) {
+  const v = r.crowd;
+  if (v === undefined) {
+    $("crowd-num").textContent = "…"; $("crowd-word").textContent = "Rating your photo…"; $("crowd-word").className = "";
+    $("crowd-fill").style.width = "0%"; $("crowd-block").hidden = false; return;
+  }
+  if (v === null) { $("crowd-block").hidden = true; return; }
+  $("crowd-block").hidden = false;
+  $("crowd-num").textContent = v.toFixed(1);
+  const word = v < 4.5 ? "Below average" : v < 5.3 ? "Average" : v < 6 ? "Above average" : "Excellent";
+  $("crowd-word").textContent = word;
+  $("crowd-word").className = v >= 5.3 ? "good" : "";
+  $("crowd-fill").style.width = `${Math.min(100, Math.max(2, ((v - 3) / 4) * 100))}%`;
+}
+
 // A joint or spot that still has to move: glow + hollow ring.
 function drawPending(x, y, now) {
   const pulse = 1 + 0.18 * Math.sin(now / 200);
@@ -759,7 +872,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // Test hook: open with ?debug to reach app state from the browser console.
-if (new URLSearchParams(location.search).has("debug")) window.__poseCoach = { S, draw, renderHud, computeMetrics, poseMetrics, RULES, trackQuest, renderPlayer };
+if (new URLSearchParams(location.search).has("debug")) window.__poseCoach = { S, draw, renderHud, computeMetrics, poseMetrics, RULES, trackQuest, renderPlayer, updateSuggestion, openPoseSheet };
 
 // Start screen: show the player's level and streak if they've played before.
 (function renderStartPlayer() {

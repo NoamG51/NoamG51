@@ -14,6 +14,12 @@ Everything runs on the phone. No photos or video leave the device, and there's n
 
 **Game layer:** every problem the coach spots goes on a quest checklist. Fixing one earns XP (pose 20, lighting 15, framing and angle 10, polish 5) with a pop-up, and each photo earns XP from its score (+25 bonus at 85 or above). XP fills levels (Newbie → Snapper → Framer → Pose Pro → Light Chaser → Cover Star → Legend), and taking a photo on consecutive days builds a streak. Progress is saved in the phone's browser only.
 
+**Pose library:** 15 proven poses (hand on hip, hands in pockets, arms crossed, weight on the back leg, walking toward the camera, looking over the shoulder, hand in hair, fixing the collar, crossed ankles, hand near the chin, shoulder turned in, and lean or sit poses for walls, rails, steps and ledges). The coach compares your body to every pose and suggests the closest one, so the change is easy; matching a pose earns +20 XP. Tap **Poses** to pick one yourself, for example "Lean on a wall" when there's a wall nearby. Browse them all at `tools/poses.html`.
+
+**Adding poses from photos:** open `tools/add-poses.html`, drop in photos, and it extracts the body skeleton in your browser and outputs JSON to add to `data/poses.json`. Only the skeleton is kept, never the photo. Use your own photos or freely licensed ones (Unsplash, Pexels, Wikimedia Commons) and fill in the source. Don't use photos saved from Instagram or Pinterest: they're copyrighted and the people in them didn't agree.
+
+**Crowd score:** after each photo, a second score out of 10 from NIMA, a model trained on the AVA dataset of about 255,000 photos rated by photographers. It runs on the phone with TensorFlow.js (about 0.3 s per photo after a one-time 8 MB download).
+
 **Ghost Pose:** instead of only telling you what to do, the app draws a dotted outline of the target pose or position on top of you. Joints that still need to move glow; once you match the outline it says "✓ Matched" and moves on. Outlines exist for: hand on hip, turning the body, bending the front knee, reframing (head cut off, too much sky, thirds), and selfie/group face position and size. Other tips (mostly lighting) show one line of text and a glowing spot.
 
 **Photo review:** after every photo (auto or manual), a review screen opens with the score, a one-line summary, the fixes for next time in order (numbered on the photo too), what's already working, light and tilt readings, and the change versus your last photo. Retake goes straight back to the camera.
@@ -44,9 +50,14 @@ Then open http://localhost:8000. Add `?debug` to the address to reach the app's 
 - `js/quest.js`: XP, levels and streak, saved in the browser.
 - `js/ghost.js`: builds the target outlines from the person's current position.
 - `js/rules.js`: the coaching rulebook. Each rule has a check, a short instruction, a reason, a priority and a score penalty. **Thresholds are first guesses; tune them here.**
+- `js/poses.js`: the pose library, pose matching and suggestions. Poses are written as joint angles; `data/poses.json` holds poses added from photos.
+- `js/aesthetic.js`: the crowd score (NIMA MobileNet rebuilt in TensorFlow.js).
+- `tools/poses.html`, `tools/add-poses.html`: browse the library; add poses from photos.
+- `models/nima/`: NIMA aesthetic weights from [idealo/image-quality-assessment](https://github.com/idealo/image-quality-assessment) (Apache-2.0), stored as float16.
+- `vendor/tfjs/`: [TensorFlow.js](https://www.npmjs.com/package/@tensorflow/tfjs) 4.22.0 (Apache-2.0).
 - `vendor/mediapipe/`: [MediaPipe Tasks Vision](https://www.npmjs.com/package/@mediapipe/tasks-vision) 0.10.14 (Apache-2.0), bundled so the app doesn't depend on a CDN.
 - `models/`: MediaPipe pose (lite) and face landmark models (Apache-2.0).
 
 ## Not yet included
 
-Tips that need to understand the scene ("Lean on the fence", "Sit on the steps") need an AI vision model, which costs money per use. For now, use the Pose Coach artifact in Claude for those on a still photo.
+The app can't see objects yet, so it won't suggest "lean on the fence" by itself: pick that pose from **Poses** when there's a fence. Automatic scene-aware ideas need an AI vision model, which costs money per use; for now, use the Pose Coach artifact in Claude for those on a still photo.
