@@ -1,0 +1,12 @@
+{
+  "name": "Pose Coach Live",
+  "short_name": "Pose Coach",
+  "description": "Live tips on pose, light and angle while you take a photo.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d0f13",
+  "theme_color": "#0d0f13",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

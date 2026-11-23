@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0f13">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pose Coach Live</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Start screen -->
+<section id="start" class="start">
+  <div class="start-inner">
+    <p class="eyebrow">Live photo coach</p>
+    <h1>Pose Coach</h1>
+    <p class="lede">Point your camera and get one tip at a time on pose, light and angle. When everything looks good, it takes the photo for you.</p>
+
+    <fieldset class="mode-pick">
+      <legend>What are you shooting?</legend>
+      <label><input type="radio" name="start-mode" value="solo" checked><span><b>Solo</b><small>Someone else holds the phone</small></span></label>
+      <label><input type="radio" name="start-mode" value="selfie"><span><b>Selfie</b><small>Just you, front camera</small></span></label>
+      <label><input type="radio" name="start-mode" value="group"><span><b>Group selfie</b><small>2 or more, front camera</small></span></label>
+    </fieldset>
+
+    <button id="start-btn" class="btn-primary" type="button">Start camera</button>
+    <p id="start-status" class="status" role="status"></p>
+    <p class="fineprint">Everything runs on your phone. No photos or video leave your device.</p>
+  </div>
+</section>
+
+<!-- Camera screen -->
+<section id="cam" class="cam" hidden>
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div id="flash" class="flash"></div>
+  <div id="countdown" class="countdown" hidden></div>
+
+  <header class="bar">
+    <div class="seg" role="group" aria-label="Shot type">
+      <button type="button" data-mode="solo">Solo</button>
+      <button type="button" data-mode="selfie">Selfie</button>
+      <button type="button" data-mode="group">Group</button>
+    </div>
+    <div class="bar-btns">
+      <button type="button" id="voice-btn" class="round" aria-pressed="false" aria-label="Spoken tips">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path class="wave" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+      </button>
+      <button type="button" id="flip-btn" class="round" aria-label="Switch camera">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2"/><path d="M14 9.5l.4 1.6-1.6.3M10 16.5l-.4-1.6 1.6-.3"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="tip" class="tip" aria-live="polite">
+    <div class="tip-meta"><span id="tip-who"></span><span id="tip-cat"></span></div>
+    <div id="tip-say" class="tip-say">Starting…</div>
+    <div id="tip-why" class="tip-why"></div>
+    <button type="button" id="tip-skip" class="tip-skip">Skip this tip</button>
+  </div>
+
+  <footer class="controls">
+    <button type="button" id="gallery-btn" class="thumb-btn" aria-label="Your photos"><span id="gallery-count"></span></button>
+    <button type="button" id="shutter" class="shutter" aria-label="Take photo"></button>
+    <div class="right-stack">
+      <div class="ring" aria-label="Photo score">
+        <svg viewBox="0 0 48 48"><circle class="track" cx="24" cy="24" r="20"/><circle id="ring-fill" class="fill" cx="24" cy="24" r="20" stroke-dasharray="125.66" stroke-dashoffset="125.66"/></svg>
+        <b id="score">–</b>
+      </div>
+      <label class="auto"><input type="checkbox" id="auto-cap" checked> Auto</label>
+    </div>
+  </footer>
+</section>
+
+<!-- Photo viewer -->
+<section id="viewer" class="viewer" hidden>
+  <div class="viewer-top">
+    <button type="button" id="viewer-close" class="text-btn">Close</button>
+    <span id="viewer-meta" class="viewer-meta"></span>
+  </div>
+  <div class="viewer-img"><img id="viewer-img" alt="Captured photo"></div>
+  <div class="viewer-strip" id="viewer-strip"></div>
+  <div class="viewer-actions">
+    <button type="button" id="viewer-delete" class="btn-ghost">Delete</button>
+    <button type="button" id="viewer-save" class="btn-primary">Save</button>
+  </div>
+  <p class="fineprint">Photos stay on this page until you save them. They're gone if you close the page.</p>
+</section>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
