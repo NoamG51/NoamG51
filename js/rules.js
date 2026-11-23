@@ -35,7 +35,7 @@ export const RULES = [
   {
     id: "level", modes: ALL, cat: "framing", pri: 5, w: 10, who: PHOTOGRAPHER,
     test: (m) => m.tilt && Math.abs(m.tilt.roll) > 4,
-    say: "Level the phone", why: "A crooked horizon makes the whole photo feel off. Line up the level in the middle.",
+    say: "Level the phone", why: "Turn the phone until the line in the middle sits on the marks.",
   },
   {
     id: "head_cut", modes: ["solo"], cat: "framing", pri: 10, w: 20, who: PHOTOGRAPHER,

@@ -420,19 +420,78 @@ function draw(now) {
       }
     }
   }
-  // Level indicator
+  // Level: shown only while the phone is tilted, then "Level ✓" briefly.
   const tilt = S.tilt.read();
-  if (tilt) {
-    const cx = W / 2, cy = H / 2, len = Math.min(W, H) * 0.18;
-    const level = Math.abs(tilt.roll) < 2;
-    ctx.save(); ctx.translate(cx, cy);
-    ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(-len - 14, 0); ctx.lineTo(-len, 0); ctx.moveTo(len, 0); ctx.lineTo(len + 14, 0); ctx.stroke();
-    ctx.rotate((-tilt.roll * Math.PI) / 180);
-    ctx.strokeStyle = level ? "#5cc48a" : "rgba(255,255,255,0.9)"; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-    ctx.restore();
+  if (tilt) drawLevel(tilt, W, r, now);
+}
+
+function drawLevel(tilt, W, r, now) {
+  const off = Math.abs(tilt.roll);
+  if (off > 1.5) { S.levelTiltedAt = now; S.levelOkAt = 0; }
+  else if (S.levelTiltedAt && !S.levelOkAt) S.levelOkAt = now;
+  if (!S.levelTiltedAt) return;                       // never tilted: stay hidden
+  const fade = S.levelOkAt ? 1 - (now - S.levelOkAt - 700) / 500 : 1;
+  if (fade <= 0) { S.levelTiltedAt = 0; S.levelOkAt = 0; return; }
+
+  const level = off <= 1.5;
+  const color = level ? "#7ee2a8" : "#ffffff";
+  const cx = W / 2, cy = r.y + r.h * 0.42;
+  const len = Math.min(W, r.h) * 0.24;
+  const ang = (-tilt.roll * Math.PI) / 180;
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, fade);
+  ctx.translate(cx, cy);
+  ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 6;
+  ctx.lineCap = "round";
+
+  // Fixed target: faint track with bracket marks at both ends.
+  ctx.strokeStyle = level ? color : "rgba(255,255,255,0.45)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([3, 6]);
+  ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = color; ctx.lineWidth = 3;
+  for (const sx of [-1, 1]) {
+    const x = sx * (len + 10);
+    ctx.beginPath();
+    ctx.moveTo(x - sx * 10, -12); ctx.lineTo(x, -12); ctx.lineTo(x, 12); ctx.lineTo(x - sx * 10, 12);
+    ctx.stroke();
   }
+
+  // Moving line: the real horizon.
+  ctx.save();
+  ctx.rotate(ang);
+  ctx.strokeStyle = color; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  // Curved arrows: which way the line has to turn to reach the marks.
+  if (!level) {
+    const R = len + 30, dir = ang > 0 ? -1 : 1;
+    ctx.strokeStyle = "#fff"; ctx.fillStyle = "#fff"; ctx.lineWidth = 3;
+    for (const base of [0, Math.PI]) {
+      const a0 = base + ang, a1 = a0 + dir * 0.3;   // fixed-length arc, always visible
+      ctx.beginPath(); ctx.arc(0, 0, R, Math.min(a0, a1), Math.max(a0, a1)); ctx.stroke();
+      const hx = Math.cos(a1) * R, hy = Math.sin(a1) * R;
+      const t = a1 + (dir * Math.PI) / 2;                 // tangent, pointing along the turn
+      ctx.beginPath();
+      ctx.moveTo(hx + Math.cos(t) * 11, hy + Math.sin(t) * 11);
+      ctx.lineTo(hx + Math.cos(t + 2.4) * 11, hy + Math.sin(t + 2.4) * 11);
+      ctx.lineTo(hx + Math.cos(t - 2.4) * 11, hy + Math.sin(t - 2.4) * 11);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // Label
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.font = "500 13px Manrope, system-ui, sans-serif";
+  ctx.fillText(level ? "Level ✓" : `Turn until the line sits on the marks · ${Math.round(off)}°`, 0, 40);
+  ctx.restore();
 }
 
 // A joint or spot that still has to move: glow + hollow ring.
