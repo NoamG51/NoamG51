@@ -31,6 +31,9 @@ button:focus-visible, label:focus-within { outline: 3px solid var(--mint); outli
 [hidden] { display: none !important; }
 h1 { font-family: var(--display); font-weight: 400; margin: 0; font-size: clamp(2.8rem, 11vw, 3.6rem); line-height: 1; letter-spacing: .01em; }
 .card { background: var(--card); border-radius: 18px; box-shadow: 0 4px 0 var(--card-edge); }
+/* Over the camera: see-through so you can still see the scene */
+.cam .card { background: rgba(36, 22, 77, 0.72); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: none; }
+.cam .seg, .cam .round, .cam .chip-btn:not([aria-pressed="true"]):not(.poses-btn) { background: rgba(36, 22, 77, 0.72); box-shadow: none; }
 
 /* ---------- Start ---------- */
 .start {
@@ -74,7 +77,16 @@ h1 { font-family: var(--display); font-weight: 400; margin: 0; font-size: clamp(
   padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
   display: flex; flex-direction: column; gap: 8px;
 }
-.player { padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; }
+.top-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.player { padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; flex: 1; cursor: pointer; }
+/* Small pill by default so the camera stays visible; tap to expand */
+.player.mini { flex: 0 1 auto; flex-direction: row; align-items: center; gap: 8px; padding: 5px 10px 5px 5px; border-radius: 999px; }
+.player.mini .lvl-badge { width: 28px; height: 28px; border-radius: 50%; font-size: .95rem; }
+.player.mini .lvl-sub, .player.mini .xp-row { display: none; }
+.player.mini .lvl-title { font-size: .95rem; }
+.player.mini .xpbar { width: 56px; height: 7px; flex: none; }
+.player.mini .player-row { gap: 7px; }
+.player.mini .streak { padding: 3px 7px; font-size: .72rem; }
 .player-row { display: flex; align-items: center; gap: 9px; }
 .lvl-badge { width: 34px; height: 34px; flex: none; border-radius: 10px; background: var(--mint); color: var(--ink); display: grid; place-items: center; font-family: var(--display); font-size: 1.15rem; }
 .lvl-text { display: flex; flex-direction: column; line-height: 1.1; flex: 1; min-width: 0; }
@@ -119,7 +131,21 @@ h1 { font-family: var(--display); font-weight: 400; margin: 0; font-size: clamp(
   bottom: calc(124px + env(safe-area-inset-bottom));
   max-width: 520px; margin: 0 auto; padding: 12px; display: flex; flex-direction: column; gap: 7px;
 }
+.quest { cursor: pointer; }
 .quest-head { display: flex; justify-content: space-between; align-items: baseline; }
+/* Compact: one slim line with the current tip; tap for the full checklist */
+.quest.compact { padding: 6px; gap: 0; border-radius: 16px; }
+.quest.compact .quest-head, .quest.compact .why { display: none; }
+.quest.compact .quest-list li:not(.now):not(.clear):not(.hint) { display: none; }
+.quest.compact .quest-list li.now { padding: 8px 10px; align-items: center; }
+.quest.compact .quest-list li.now .say { font-size: .98rem; }
+.quest.compact .quest-list li.clear { padding: 8px 10px; font-size: 1rem; }
+.quest.compact .quest-list li.hint { padding: 4px 6px; }
+.quest-more { display: none; font-size: .72rem; font-weight: 600; color: var(--muted); text-align: center; padding-top: 4px; }
+.quest.compact .quest-more { display: block; }
+/* Clean view: tap the camera to hide everything but the outline and shutter */
+.cam.clean .top, .cam.clean .quest, .cam.clean .toast, .cam.clean .skip-btn { display: none; }
+.clean-hint { position: absolute; left: 50%; transform: translateX(-50%); top: calc(14px + env(safe-area-inset-top)); background: rgba(18, 10, 43, 0.7); color: var(--muted); font-size: .78rem; font-weight: 600; padding: 6px 12px; border-radius: 999px; white-space: nowrap; pointer-events: none; }
 .quest-name { font-family: var(--display); font-size: 1.15rem; }
 .quest-count { font-size: .8rem; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .quest-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }

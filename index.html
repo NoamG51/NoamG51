@@ -47,7 +47,8 @@
   <div id="countdown" class="countdown" hidden></div>
 
   <header class="top">
-    <div class="player card">
+    <div class="top-row">
+    <div class="player card mini" id="player" role="button" tabindex="0" aria-expanded="false" aria-label="Your level and XP. Tap for details.">
       <div class="player-row">
         <span id="lvl-num" class="lvl-badge">1</span>
         <div class="lvl-text"><span id="lvl-title" class="lvl-title">Newbie</span><span id="lvl-sub" class="lvl-sub">Solo quest</span></div>
@@ -59,6 +60,8 @@
       <div class="xpbar" role="progressbar" aria-label="XP to next level" aria-valuemin="0" id="xpbar"><div id="xp-fill"></div></div>
       <div class="xp-row"><span id="xp-text"></span><span id="xp-next"></span></div>
     </div>
+    <button type="button" id="poses-btn" class="chip-btn poses-btn" aria-haspopup="dialog">Poses</button>
+    </div>
     <div class="tools">
       <div class="seg" role="group" aria-label="Shot type">
         <button type="button" data-mode="solo">Solo</button>
@@ -66,7 +69,6 @@
         <button type="button" data-mode="couple">Couple</button>
         <button type="button" data-mode="group">Group</button>
       </div>
-      <button type="button" id="poses-btn" class="chip-btn poses-btn" aria-haspopup="dialog">Poses</button>
     </div>
     <div class="side-tools">
         <button type="button" id="auto-btn" class="chip-btn" aria-pressed="true" aria-label="Auto-capture">Auto</button>
@@ -81,7 +83,9 @@
 
   <div id="toast" class="toast" aria-live="polite"></div>
 
-  <div id="quest" class="quest card" aria-live="polite">
+  <div id="clean-hint" class="clean-hint" hidden>Tips hidden · tap the screen to show them</div>
+
+  <div id="quest" class="quest card compact" role="button" tabindex="0" aria-expanded="false" aria-live="polite">
     <div class="quest-head"><span id="quest-name" class="quest-name">Quest</span><span id="quest-count" class="quest-count"></span></div>
     <ul id="quest-list" class="quest-list"></ul>
   </div>

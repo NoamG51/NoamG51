@@ -34,7 +34,7 @@ const S = {
   quest: new Quest(),
   questItems: new Map(), // rule id -> { rule, done, doneAt, xp }
   sugg: null, suggAt: 0, pinned: null, pinRule: null, matchedPoses: new Set(), matchRun: 0,
-  fit: null, place: null, sheetSeen: new Set(),
+  fit: null, place: null, sheetSeen: new Set(), phaseCand: null, phaseSince: 0, phaseShown: null,
 };
 const GATE = new Set(["no_person", "no_face", "couple_two"]);
 const BACK_CAMERA = new Set(["solo", "couple"]); // must clear first; not part of the checklist
@@ -218,8 +218,9 @@ function evaluate(now) {
     let fail = false;
     try { fail = !!r.test(m); } catch { fail = false; }
     const st = S.ruleState.get(r.id) || { fail: 0, pass: 0, on: false };
-    if (fail) { st.fail++; st.pass = 0; if (st.fail >= 3) st.on = true; }
-    else { st.pass++; st.fail = 0; if (st.pass >= 4) st.on = false; }
+    // A problem must last ~0.5 s to show, and be fixed ~0.6 s to clear, so tips don't flicker.
+    if (fail) { st.fail++; st.pass = 0; if (st.fail >= 8) st.on = true; }
+    else { st.pass++; st.fail = 0; if (st.pass >= 10) st.on = false; }
     S.ruleState.set(r.id, st);
     if (st.on) active.push(r);
   }
@@ -245,7 +246,7 @@ function updateTip(now) {
     if (!stillOn) {
       if (!S.skipped.has(cur.id)) S.niceUntil = now + 900;
       setTip(best, now);
-    } else if (best && best !== cur && now - S.tipShownAt > 2000 && rank(best) < rank(cur)) {
+    } else if (best && best !== cur && now - S.tipShownAt > 4000 && rank(best) < rank(cur)) {
       setTip(best, now);
     }
   } else if (best && now > S.niceUntil) {
@@ -311,6 +312,7 @@ function renderQuest() {
   questSig = sig;
 
   $("quest-name").textContent = `Quest: ${QUEST_NAME[S.mode]}`;
+  if (!$("quest-more")) { const m = document.createElement("div"); m.id = "quest-more"; m.className = "quest-more"; $("quest").appendChild(m); }
   $("quest-count").textContent = count;
   const ul = $("quest-list"); ul.innerHTML = "";
   for (const r of rows) {
@@ -328,6 +330,8 @@ function renderQuest() {
     li.append(box, txt, pts);
     ul.appendChild(li);
   }
+  $("quest-more").textContent = items.length > 1 ? `${done.length} of ${items.length} done · tap for the checklist` : "";
+  $("quest-more").hidden = !$("quest-more").textContent;
   $("tip-skip").hidden = !now;
 }
 
@@ -569,7 +573,7 @@ function speak(text, force) {
   if (!S.voice || !window.speechSynthesis || !$("viewer").hidden) return;
   const now = performance.now();
   if (!force && (text === S.lastSpoken && now - S.lastSpeakAt < 8000)) return;
-  if (!force && now - S.lastSpeakAt < 2500) return;
+  if (!force && now - S.lastSpeakAt < 4000) return;
   S.lastSpoken = text; S.lastSpeakAt = now;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
@@ -742,7 +746,11 @@ function updateSuggestion(now, aspect) {
   if (pinned && S.mode !== "selfie") {
     S.sugg = null;
     S.place = framePlacement(pinned, aspect);
-    S.fit = fitToFrame(people, aspect, pinned, S.place);
+    const raw = fitToFrame(people, aspect, pinned, S.place);
+    // Only switch the instruction (enter / closer / back / shift / pose) once it has held ~1 s.
+    if (raw.phase !== S.phaseCand) { S.phaseCand = raw.phase; S.phaseSince = now; }
+    if (!S.phaseShown || now - S.phaseSince > 1000) S.phaseShown = raw.phase;
+    S.fit = { ...raw, phase: S.phaseShown };
     return;
   }
 
@@ -752,7 +760,7 @@ function updateSuggestion(now, aspect) {
   if (pinned) s = suggest(lms, aspect, S.mode, { only: S.pinned });
   else {
     // Keep the same suggestion for a few seconds so it doesn't flicker.
-    if (S.sugg && now - S.suggAt < 4000) s = suggest(lms, aspect, S.mode, { only: S.sugg.pose.id });
+    if (S.sugg && now - S.suggAt < 8000) s = suggest(lms, aspect, S.mode, { only: S.sugg.pose.id });
     if (!s) { s = suggest(lms, aspect, S.mode, { prop: null }); S.suggAt = now; }
   }
   S.sugg = s;
@@ -816,7 +824,7 @@ function pinPose(id) {
     test: () => (S.mode === "selfie" ? !(S.sugg && S.sugg.matched) : !(S.fit && S.fit.phase === "matched")),
     say: `Match: ${pose.name}`, why: pose.how,
   } : null;
-  S.sugg = null; S.fit = null; S.place = null; questSig = "";
+  S.sugg = null; S.fit = null; S.place = null; S.phaseShown = null; S.phaseCand = null; questSig = "";
   if (pose) toast(`New goal · ${pose.name}`, true);
 }
 
@@ -878,6 +886,21 @@ function maybeOpenPoseSheet() {
   openPoseSheet();
 }
 $("poses-btn").addEventListener("click", openPoseSheet);
+// Tap the player pill for level details; tap the tip bar for the full checklist.
+function toggleExpand(el) {
+  const open = el.classList.toggle(el.id === "player" ? "mini" : "compact") === false;
+  el.setAttribute("aria-expanded", String(open));
+}
+for (const id of ["player", "quest"]) {
+  const el = $(id);
+  el.addEventListener("click", () => toggleExpand(el));
+  el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(el); } });
+}
+// Tap the camera itself to hide or show all the tips.
+$("overlay").addEventListener("click", () => {
+  const clean = $("cam").classList.toggle("clean");
+  $("clean-hint").hidden = !clean;
+});
 $("sheet-close").addEventListener("click", closePoseSheet);
 $("pose-auto").addEventListener("click", () => { pinPose(null); closePoseSheet(); });
 
